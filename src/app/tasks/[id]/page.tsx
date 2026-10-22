@@ -61,9 +61,9 @@ export default async function TaskDetailPage({
   const assigneeName = relationField(task.assignee, 'display_name')
   const isMine = task.assignee_id === profile.id
   const isUnassigned = task.status === 'unassigned'
-  const claimedByOther = task.status === 'claimed' && !isMine
+  const ownedByOther = !isUnassigned && !isMine
   const canEdit = task.status === 'claimed' && isMine
-  const readOnly = task.status === 'submitted'
+  const readOnly = task.status === 'submitted' && isMine
 
   let segments: SegmentInput[] = []
   if (canEdit || readOnly) {
@@ -95,7 +95,9 @@ export default async function TaskDetailPage({
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{task.title}</h1>
+              <h1 className="text-xl font-semibold tracking-tight">
+                {task.title}
+              </h1>
               <StatusBadge status={task.status} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -134,12 +136,16 @@ export default async function TaskDetailPage({
               </form>
             </CardContent>
           </Card>
-        ) : claimedByOther ? (
+        ) : ownedByOther ? (
           <Card>
             <CardHeader>
-              <CardTitle>任务已被领取</CardTitle>
+              <CardTitle>
+                {task.status === 'submitted'
+                  ? '该任务已由其他标注员提交'
+                  : '任务已被其他标注员领取'}
+              </CardTitle>
               <CardDescription>
-                {assigneeName ?? '其他标注员'} 正在标注这个任务，当前不可编辑。
+                由同租户标注员 {assigneeName ?? '其他成员'} 负责，为保障标注独立性，仅本人与管理员可查看标注片段。
               </CardDescription>
             </CardHeader>
           </Card>
@@ -147,7 +153,7 @@ export default async function TaskDetailPage({
           <div className="flex flex-col gap-4">
             {readOnly ? (
               <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                该任务已提交，以下时间段仅供查看。有效时长计入提交当天。
+                该任务已提交，以下时间段仅供查看。如需修改可联系管理员打回重标。
               </div>
             ) : null}
             <AnnotationWorkspace

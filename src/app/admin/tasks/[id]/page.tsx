@@ -11,6 +11,7 @@ import { formatDuration, formatShanghaiDateTime } from '@/lib/format'
 import { relationField } from '@/lib/relations'
 import { createClient } from '@/lib/supabase/server'
 import type { TaskStatus } from '@/lib/types'
+import { AdminTaskControls } from './admin-task-controls'
 
 type AdminTaskDetail = {
   id: string
@@ -137,6 +138,17 @@ export default async function AdminTaskDetailPage({
             }
           />
         </div>
+
+        <AdminTaskControls
+          taskId={task.id}
+          title={task.title}
+          videoUrl={task.video_url}
+          tenantName={tenantName}
+          assigneeName={assigneeName}
+          status={task.status}
+          submittedAt={task.submitted_at}
+          segments={segments}
+        />
 
         {task.status === 'submitted' ? null : (
           <div className="mb-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">

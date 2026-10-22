@@ -22,6 +22,10 @@ import {
 import { requireProfile } from '@/lib/auth'
 import { formatDuration } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
+import {
+  StatsExportBar,
+  type TaskDatasetExportItem,
+} from './stats-export-bar'
 
 type TenantRow = { id: string; name: string }
 
@@ -151,6 +155,60 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
       Number(b.effective_ms ?? 0) - Number(a.effective_ms ?? 0)
   )
 
+  const submittedTaskIds = detailRows.map((r) => r.task_id)
+  const videoUrlMap = new Map<string, string>()
+  const segmentsByTaskMap = new Map<
+    string,
+    Array<{ start_ms: number; end_ms: number; note: string | null }>
+  >()
+
+  if (submittedTaskIds.length > 0) {
+    const [{ data: taskMeta }, { data: segData }] = await Promise.all([
+      supabase
+        .from('tasks')
+        .select('id, video_url')
+        .in('id', submittedTaskIds),
+      supabase
+        .from('segments')
+        .select('task_id, start_ms, end_ms, note')
+        .in('task_id', submittedTaskIds)
+        .order('start_ms'),
+    ])
+
+    for (const item of (taskMeta ?? []) as Array<{
+      id: string
+      video_url: string
+    }>) {
+      videoUrlMap.set(item.id, item.video_url)
+    }
+
+    for (const seg of (segData ?? []) as Array<{
+      task_id: string
+      start_ms: number
+      end_ms: number
+      note: string | null
+    }>) {
+      const list = segmentsByTaskMap.get(seg.task_id) ?? []
+      list.push({
+        start_ms: seg.start_ms,
+        end_ms: seg.end_ms,
+        note: seg.note,
+      })
+      segmentsByTaskMap.set(seg.task_id, list)
+    }
+  }
+
+  const exportDataset: TaskDatasetExportItem[] = detailRows.map((row) => ({
+    task_id: row.task_id,
+    title: row.title,
+    tenant_name: row.tenant_name,
+    annotator_name: row.annotator_name,
+    video_url: videoUrlMap.get(row.task_id) ?? '',
+    submitted_date: row.submitted_date,
+    effective_ms: Number(row.effective_ms ?? 0),
+    segments: segmentsByTaskMap.get(row.task_id) ?? [],
+  }))
+
   return (
     <>
       <AppHeader profile={profile} />
@@ -159,15 +217,18 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">工作量统计</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              仅统计已提交任务，有效时长计入提交当天（Asia/Shanghai）。
+              仅统计已提交任务，有效时长计入提交当天（Asia/Shanghai），支持一键导出对账单与训练数据集。
             </p>
           </div>
-          <Link
-            href="/admin"
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-          >
-            返回任务管理
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatsExportBar daily={daily} dataset={exportDataset} />
+            <Link
+              href="/admin"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              返回任务管理
+            </Link>
+          </div>
         </div>
 
         <Card className="mb-4">

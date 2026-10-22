@@ -120,7 +120,10 @@ create policy segments_read on public.segments
       select 1
       from public.tasks t
       where t.id = segments.task_id
-        and (public.is_admin() or t.tenant_id = public.current_tenant_id())
+        and (
+          public.is_admin()
+          or (t.tenant_id = public.current_tenant_id() and t.assignee_id = auth.uid())
+        )
     )
   );
 
@@ -270,6 +273,71 @@ $$;
 
 revoke all on function public.submit_task(uuid, jsonb) from public, anon;
 grant execute on function public.submit_task(uuid, jsonb) to authenticated;
+
+-- 释放/回收任务：标注员本人或管理员可将标注中的任务退回待领取池并清空草稿
+create or replace function public.unclaim_task(p_task_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_profile public.profiles%rowtype;
+begin
+  select * into v_profile from public.profiles where id = auth.uid();
+  if not found then
+    raise exception 'PROFILE_NOT_FOUND';
+  end if;
+
+  if not exists (
+    select 1 from public.tasks
+    where id = p_task_id
+      and status = 'claimed'
+      and (
+        v_profile.role = 'admin'
+        or (assignee_id = auth.uid() and tenant_id = v_profile.tenant_id)
+      )
+  ) then
+    raise exception 'TASK_NOT_EDITABLE';
+  end if;
+
+  delete from public.segments where task_id = p_task_id;
+
+  update public.tasks
+     set status = 'unassigned', assignee_id = null, submitted_at = null
+   where id = p_task_id
+     and status = 'claimed';
+end;
+$$;
+
+revoke all on function public.unclaim_task(uuid) from public, anon;
+grant execute on function public.unclaim_task(uuid) to authenticated;
+
+-- 管理员打回重标：将已提交任务退回标注中（保留片段作为草稿，从有效工时中移除）
+create or replace function public.reopen_task(p_task_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'NOT_ADMIN';
+  end if;
+
+  update public.tasks
+     set status = 'claimed', submitted_at = null
+   where id = p_task_id
+     and status = 'submitted';
+
+  if not found then
+    raise exception 'TASK_NOT_SUBMITTED';
+  end if;
+end;
+$$;
+
+revoke all on function public.reopen_task(uuid) from public, anon;
+grant execute on function public.reopen_task(uuid) to authenticated;
 
 -- 已提交任务的工时明细；security_invoker 让底层 RLS 继续生效
 create or replace view public.task_workloads

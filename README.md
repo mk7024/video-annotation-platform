@@ -26,7 +26,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_xxx
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-4. 打开 Supabase Dashboard → SQL Editor，按文件名顺序执行 [`supabase/migrations`](supabase/migrations) 下的 SQL；如果之前已执行过没有备注字段的旧版 0001，补跑 [0002_segment_notes.sql](supabase/migrations/0002_segment_notes.sql) 即可。
+4. 打开 Supabase Dashboard → SQL Editor，按文件名顺序执行 [`supabase/migrations`](supabase/migrations) 下的 SQL（已有旧库只需补跑 [0002_segment_notes.sql](supabase/migrations/0002_segment_notes.sql) 与 [0003_workflow_enhancements.sql](supabase/migrations/0003_workflow_enhancements.sql)）。
 
 ### 2. 写入演示数据
 
@@ -64,14 +64,18 @@ seed 预置了待领取、标注中（草稿）和已提交任务，打开管理
 3. 回到管理员账号，在「工作量统计」查看按天汇总的有效时长，页面还提供按标注员分组和提交明细；点击任务名可进入任务详情，查看每个已提交任务的时间段列表和备注。
 4. 用 `carol@demo.com` 登录，任务列表只会出现「远山数据」的任务，验证租户隔离。
 
-## 规则如何落地
+## 规则与工程细节落地
 
-- **时间段不重叠**：前端校验 + `save_task_segments` RPC 校验 + Postgres 排他约束 `segments_no_overlap` 三层保障。
-- **有效时长**：只汇总 `submitted` 任务的片段，`sum(end_ms - start_ms)`；草稿不计入。
-- **归日**：按 `submitted_at` 换算成 `Asia/Shanghai` 时区后的日期统计。
-- **任务领取**：`claim_task` RPC 用单条 `UPDATE ... WHERE status = 'unassigned'` 原子抢占，避免并发重复领取。
-- **租户隔离**：RLS 通过 `auth.uid()` 反查 `profiles.tenant_id` 限制标注员的读写范围；管理员为全局角色，可跨租户发布与统计。
-- **提交**：保存片段和状态变更在同一个 RPC 事务里完成，提交后页面变为只读。
+- **时间段不重叠**：前端实时校验（含边界微调校验）+ Server Action 校验 + `save_task_segments` RPC 校验 + Postgres 排他约束 `segments_no_overlap` 四层保障。
+- **有效时长与防刷校验**：只汇总 `submitted` 任务的片段，`sum(end_ms - start_ms)`；草稿不计入；服务端同时校验片段终点不超过视频实际时长上限。
+- **归日与双端对账**：按 `submitted_at` 换算成 `Asia/Shanghai` 时区后的日期统计；标注员端与管理员端共享同一工时口径，支持实时对账。
+- **任务生命周期闭环**：
+  - `claim_task` RPC 单条原子 `UPDATE ... WHERE status = 'unassigned'` 防并发抢单；
+  - `unclaim_task` 支持标注员释放无法完成的任务（或管理员强制回收超时任务）回任务池；
+  - `reopen_task` 支持管理员质检时将不合格的 `submitted` 任务打回 `claimed` 重标。
+- **租户隔离与同组防抄袭**：RLS 通过 `auth.uid()` 反查 `profiles.tenant_id` 隔离跨租户任务；同租户内仅任务领取人本人和管理员可读取对应任务的 `segments` 明细。
+- **高效标注工作台**：支持键盘快捷键（`Space` 播放/暂停、`I/[` 设起点、`O/]` 设终点、`←/→` 0.1s 步进）、倍速切换（`0.5x ~ 2x`）、区间预览（播到片段终点自动暂停）、已有片段起止边界微调、具身智能动作原语快捷标签与未保存离开拦截。
+- **数据交付与批量下发**：管理员支持单条或按行批量发布任务，支持一键导出每日有效工时 CSV、任务明细 CSV 与标准标注数据集 JSON。
 
 ## 数据表
 

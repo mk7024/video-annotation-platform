@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
+import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
 import { getSupabaseEnv } from '@/lib/env'
 
 export async function createClient() {
@@ -21,5 +22,16 @@ export async function createClient() {
         }
       },
     },
+  })
+}
+
+export function createServiceClient() {
+  const { url } = getSupabaseEnv()
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceRoleKey) {
+    return null
+  }
+  return createSupabaseJsClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
   })
 }

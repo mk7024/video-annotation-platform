@@ -1,9 +1,19 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import type { MouseEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { Play, Save, Send, Trash2, X } from 'lucide-react'
+import {
+  Keyboard,
+  Pause,
+  Play,
+  RotateCcw,
+  Save,
+  Send,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,7 +26,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { formatDuration, formatTimecodeMs } from '@/lib/format'
 import type { SegmentInput } from '@/lib/types'
-import { saveDraftAction, submitTaskAction } from '@/app/tasks/[id]/actions'
+import {
+  saveDraftAction,
+  submitTaskAction,
+  unclaimTaskAction,
+} from '@/app/tasks/[id]/actions'
 
 type SegmentItem = SegmentInput & { id: string }
 
@@ -26,6 +40,18 @@ type AnnotationWorkspaceProps = {
   initialSegments: SegmentInput[]
   readOnly: boolean
 }
+
+const SPEED_OPTIONS = [0.5, 1, 1.5, 2] as const
+
+const ACTION_TAG_PRESETS = [
+  '抓取物体',
+  '移动机械臂',
+  '对准目标',
+  '推动方块',
+  '放置物体',
+  '按压按钮',
+  '机械臂复位',
+] as const
 
 function signature(segments: SegmentInput[]): string {
   return JSON.stringify(
@@ -67,6 +93,11 @@ export function AnnotationWorkspace({
   const [pendingEnd, setPendingEnd] = useState<number | null>(null)
   const [durationMs, setDurationMs] = useState(0)
   const [currentMs, setCurrentMs] = useState(0)
+  const [playbackRate, setPlaybackRate] = useState<number>(1)
+  const [previewEndMs, setPreviewEndMs] = useState<number | null>(null)
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
+  const [videoLoadError, setVideoLoadError] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -79,16 +110,30 @@ export function AnnotationWorkspace({
   const totalMs = durationMs > 0 ? durationMs : fallbackTotal
   const currentTotalMs = totalLength(segments)
 
+  // 未保存离开拦截，避免标注员误关标签页丢失草稿
+  useEffect(() => {
+    if (readOnly || !dirty) {
+      return
+    }
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [dirty, readOnly])
+
   function toPercent(ms: number): string {
     const ratio = totalMs > 0 ? ms / totalMs : 0
     return `${Math.min(100, Math.max(0, ratio * 100))}%`
   }
 
-  function readCurrentMs(): number {
+  const readCurrentMs = useCallback((): number => {
     return Math.round((videoRef.current?.currentTime ?? 0) * 1000)
-  }
+  }, [])
 
   function handleLoadedMetadata() {
+    setVideoLoadError(false)
     const duration = videoRef.current?.duration
     if (duration && Number.isFinite(duration)) {
       setDurationMs(Math.round(duration * 1000))
@@ -96,16 +141,55 @@ export function AnnotationWorkspace({
   }
 
   function handleTimeUpdate() {
-    setCurrentMs(readCurrentMs())
+    const ms = readCurrentMs()
+    setCurrentMs(ms)
+
+    // 区间预览模式：播放到达当前预览片段终点时自动暂停
+    if (previewEndMs != null && ms >= previewEndMs) {
+      const video = videoRef.current
+      if (video && !video.paused) {
+        video.pause()
+        video.currentTime = previewEndMs / 1000
+      }
+      setCurrentMs(previewEndMs)
+      setPreviewEndMs(null)
+    }
   }
 
-  function seekTo(ms: number) {
-    const video = videoRef.current
-    if (!video || video.readyState < 1) {
-      return
+  const seekTo = useCallback(
+    (ms: number) => {
+      const video = videoRef.current
+      if (!video || video.readyState < 1) {
+        return
+      }
+      const maxMs = durationMs > 0 ? durationMs : totalMs
+      const clamped = Math.max(0, Math.min(maxMs, Math.round(ms)))
+      setPreviewEndMs(null)
+      video.currentTime = clamped / 1000
+      setCurrentMs(clamped)
+    },
+    [durationMs, totalMs]
+  )
+
+  const stepByMs = useCallback(
+    (deltaMs: number) => {
+      const video = videoRef.current
+      if (!video || video.readyState < 1) {
+        return
+      }
+      if (!video.paused) {
+        video.pause()
+      }
+      seekTo(readCurrentMs() + deltaMs)
+    },
+    [readCurrentMs, seekTo]
+  )
+
+  function changeSpeed(rate: number) {
+    setPlaybackRate(rate)
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate
     }
-    video.currentTime = ms / 1000
-    setCurrentMs(ms)
   }
 
   function handleTrackClick(event: MouseEvent<HTMLButtonElement>) {
@@ -121,43 +205,48 @@ export function AnnotationWorkspace({
     seekTo(Math.round(ratio * totalMs))
   }
 
-  function addSegment(startMs: number, endMs: number) {
-    if (durationMs > 0 && endMs > durationMs + 100) {
-      setError('终点超出了视频总时长')
-      return
-    }
+  const addSegment = useCallback(
+    (startMs: number, endMs: number) => {
+      if (durationMs > 0 && endMs > durationMs + 100) {
+        setError('终点超出了视频总时长')
+        return
+      }
 
-    const overlaps = segments.some(
-      (segment) => startMs < segment.endMs && endMs > segment.startMs
-    )
-    if (overlaps) {
-      setError('与已有时间段重叠，请调整起点或终点')
-      return
-    }
-
-    keyRef.current += 1
-    setSegments((previous) =>
-      [...previous, { id: `seg-${keyRef.current}`, startMs, endMs }].sort(
-        (a, b) => a.startMs - b.startMs
+      const overlaps = segments.some(
+        (segment) => startMs < segment.endMs && endMs > segment.startMs
       )
-    )
-    setPendingStart(null)
-    setPendingEnd(null)
-    setError(null)
-    setNotice('已添加时间段，记得保存草稿')
-  }
+      if (overlaps) {
+        setError('与已有时间段重叠，请调整起点或终点')
+        return
+      }
 
-  function markStart() {
+      keyRef.current += 1
+      const newId = `seg-${keyRef.current}`
+      setSegments((previous) =>
+        [...previous, { id: newId, startMs, endMs }].sort(
+          (a, b) => a.startMs - b.startMs
+        )
+      )
+      setActiveSegmentId(newId)
+      setPendingStart(null)
+      setPendingEnd(null)
+      setError(null)
+      setNotice('已添加时间段，记得保存草稿')
+    },
+    [durationMs, segments]
+  )
+
+  const markStart = useCallback(() => {
     setPendingStart(readCurrentMs())
     setPendingEnd(null)
     setError(null)
     setNotice(null)
-  }
+  }, [readCurrentMs])
 
-  function markEnd() {
+  const markEnd = useCallback(() => {
     const endMs = readCurrentMs()
     if (pendingStart == null) {
-      setError('请先在片段起点点击“设为起点”')
+      setError('请先在片段起点点击“设为起点”（或按快捷键 I / [）')
       return
     }
     setPendingEnd(endMs)
@@ -166,17 +255,128 @@ export function AnnotationWorkspace({
       return
     }
     addSegment(pendingStart, endMs)
-  }
+  }, [addSegment, pendingStart, readCurrentMs])
 
-  function clearPending() {
+  const clearPending = useCallback(() => {
     setPendingStart(null)
     setPendingEnd(null)
     setError(null)
-  }
+  }, [])
+
+  // 键盘快捷键支持：Space 播放/暂停，I/[ 设起点，O/] 设终点，←/→ 逐帧步进
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+
+      if (event.code === 'Space') {
+        const video = videoRef.current
+        if (video && target !== video) {
+          event.preventDefault()
+          if (video.paused) {
+            void video.play()
+          } else {
+            video.pause()
+          }
+        }
+        return
+      }
+
+      if (event.code === 'ArrowLeft') {
+        event.preventDefault()
+        stepByMs(event.shiftKey ? -1000 : -100)
+        return
+      }
+
+      if (event.code === 'ArrowRight') {
+        event.preventDefault()
+        stepByMs(event.shiftKey ? 1000 : 100)
+        return
+      }
+
+      if (readOnly) {
+        return
+      }
+
+      if (event.code === 'KeyI' || event.code === 'BracketLeft') {
+        event.preventDefault()
+        markStart()
+      } else if (event.code === 'KeyO' || event.code === 'BracketRight') {
+        event.preventDefault()
+        markEnd()
+      } else if (event.code === 'Escape') {
+        clearPending()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [clearPending, markEnd, markStart, readOnly, stepByMs])
 
   function removeSegment(id: string) {
     setSegments((previous) => previous.filter((segment) => segment.id !== id))
+    if (activeSegmentId === id) {
+      setActiveSegmentId(null)
+      setPreviewEndMs(null)
+    }
+    if (editingSegmentId === id) {
+      setEditingSegmentId(null)
+    }
     setNotice('已删除时间段，记得保存草稿')
+  }
+
+  function updateSegmentBounds(
+    id: string,
+    nextStartMs: number,
+    nextEndMs: number
+  ) {
+    const start = Math.round(nextStartMs)
+    const end = Math.round(nextEndMs)
+
+    if (start < 0) {
+      setError('起点不能小于 00:00.0')
+      return
+    }
+    if (end - start < 100) {
+      setError('片段长度至少需要 0.1 秒')
+      return
+    }
+    if (durationMs > 0 && end > durationMs + 100) {
+      setError('终点不能超出视频总时长')
+      return
+    }
+
+    const overlaps = segments.some(
+      (segment) =>
+        segment.id !== id && start < segment.endMs && end > segment.startMs
+    )
+    if (overlaps) {
+      setError('微调后的时间段与其他片段重叠')
+      return
+    }
+
+    setSegments((previous) =>
+      previous
+        .map((segment) =>
+          segment.id === id
+            ? { ...segment, startMs: start, endMs: end }
+            : segment
+        )
+        .sort((a, b) => a.startMs - b.startMs)
+    )
+    setError(null)
+    setNotice('已微调时间段边界，记得保存草稿')
   }
 
   function updateNote(id: string, note: string) {
@@ -187,13 +387,38 @@ export function AnnotationWorkspace({
     )
   }
 
-  function playFrom(ms: number) {
+  function applyPresetTag(id: string, tag: string) {
+    const target = segments.find((s) => s.id === id)
+    if (!target) {
+      return
+    }
+    const existing = (target.note ?? '').trim()
+    if (!existing) {
+      updateNote(id, `[${tag}] `)
+      return
+    }
+    if (existing.startsWith(`[${tag}]`)) {
+      return
+    }
+    const stripped = existing.replace(/^\[[^\]]+\]\s*/, '')
+    updateNote(id, `[${tag}] ${stripped}`)
+  }
+
+  function previewSegment(segment: SegmentItem) {
     const video = videoRef.current
+    setActiveSegmentId(segment.id)
     if (!video || video.readyState < 1) {
       return
     }
-    video.currentTime = ms / 1000
+    setPreviewEndMs(segment.endMs)
+    video.currentTime = segment.startMs / 1000
+    setCurrentMs(segment.startMs)
     void video.play()
+  }
+
+  function stopPreview() {
+    setPreviewEndMs(null)
+    videoRef.current?.pause()
   }
 
   function currentPayload(): SegmentInput[] {
@@ -210,7 +435,11 @@ export function AnnotationWorkspace({
     setNotice(null)
 
     startTransition(async () => {
-      const result = await saveDraftAction(taskId, payload)
+      const result = await saveDraftAction(
+        taskId,
+        payload,
+        durationMs > 0 ? durationMs : undefined
+      )
       if (!result.ok) {
         setError(result.error)
         return
@@ -240,7 +469,33 @@ export function AnnotationWorkspace({
     setNotice(null)
 
     startTransition(async () => {
-      const result = await submitTaskAction(taskId, payload)
+      const result = await submitTaskAction(
+        taskId,
+        payload,
+        durationMs > 0 ? durationMs : undefined
+      )
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      router.push('/tasks')
+      router.refresh()
+    })
+  }
+
+  function handleUnclaim() {
+    const confirmed = window.confirm(
+      '确认放弃并释放该任务吗？\n当前未提交的草稿片段将被清空，任务将退回本租户的待领取池。'
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setError(null)
+    setNotice(null)
+
+    startTransition(async () => {
+      const result = await unclaimTaskAction(taskId)
       if (!result.ok) {
         setError(result.error)
         return
@@ -251,7 +506,7 @@ export function AnnotationWorkspace({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
       <Card>
         <CardContent className="flex flex-col gap-4">
           <video
@@ -264,11 +519,82 @@ export function AnnotationWorkspace({
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
             onSeeked={handleTimeUpdate}
+            onError={() => setVideoLoadError(true)}
           />
+
+          {videoLoadError ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                视频加载遇到网络问题（Hugging Face 远程大视频可能需要科学上网或稍作等待），您也可以点击右上角「原始视频」测试连接。
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {/* 步进与倍速工具栏 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-xs text-muted-foreground">
+                微调步进
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => stepByMs(-1000)}
+                title="后退 1 秒 (Shift + ←)"
+              >
+                -1.0s
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => stepByMs(-100)}
+                title="后退 0.1 秒 (←)"
+              >
+                -0.1s
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => stepByMs(100)}
+                title="前进 0.1 秒 (→)"
+              >
+                +0.1s
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => stepByMs(1000)}
+                title="前进 1 秒 (Shift + →)"
+              >
+                +1.0s
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-xs text-muted-foreground">倍速</span>
+              {SPEED_OPTIONS.map((rate) => (
+                <Button
+                  key={rate}
+                  type="button"
+                  variant={playbackRate === rate ? 'default' : 'ghost'}
+                  size="xs"
+                  onClick={() => changeSpeed(rate)}
+                >
+                  {rate}x
+                </Button>
+              ))}
+            </div>
+          </div>
 
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>时间段轨道（点击跳转）</span>
+              <span>
+                时间段轨道（点击空白处跳转，点击色块预览该片段并在终点自动暂停）
+              </span>
               <span className="font-mono tabular-nums">
                 {formatTimecodeMs(currentMs)} /{' '}
                 {durationMs > 0 ? formatTimecodeMs(durationMs) : '--:--'}
@@ -279,24 +605,41 @@ export function AnnotationWorkspace({
               type="button"
               aria-label="视频时间段轨道"
               onClick={handleTrackClick}
-              className="relative h-10 w-full cursor-pointer overflow-hidden rounded-lg bg-muted"
+              className="relative h-11 w-full cursor-pointer overflow-hidden rounded-lg border bg-muted"
             >
-              {segments.map((segment) => (
-                <span
-                  key={segment.id}
-                  title={`${formatTimecodeMs(segment.startMs)} – ${formatTimecodeMs(
-                    segment.endMs
-                  )}${segment.note ? ` · ${segment.note}` : ''}`}
-                  className="pointer-events-none absolute inset-y-1.5 rounded-sm bg-primary/70"
-                  style={{
-                    left: toPercent(segment.startMs),
-                    width: toPercent(segment.endMs - segment.startMs),
-                    minWidth: '2px',
-                  }}
-                />
-              ))}
+              {segments.map((segment, index) => {
+                const isActive = activeSegmentId === segment.id
+                return (
+                  <span
+                    key={segment.id}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      previewSegment(segment)
+                    }}
+                    title={`#${index + 1} ${formatTimecodeMs(
+                      segment.startMs
+                    )} – ${formatTimecodeMs(segment.endMs)}${
+                      segment.note ? ` · ${segment.note}` : ''
+                    }（点击预览此区间）`}
+                    className={`absolute inset-y-1.5 flex items-center justify-center overflow-hidden rounded-sm text-[10px] font-medium text-primary-foreground transition-colors ${
+                      isActive
+                        ? 'bg-emerald-600 ring-2 ring-emerald-400'
+                        : 'bg-primary/75 hover:bg-primary'
+                    }`}
+                    style={{
+                      left: toPercent(segment.startMs),
+                      width: toPercent(segment.endMs - segment.startMs),
+                      minWidth: '4px',
+                    }}
+                  >
+                    <span className="truncate px-1">{index + 1}</span>
+                  </span>
+                )
+              })}
 
-              {pendingStart != null && pendingEnd != null && pendingEnd > pendingStart ? (
+              {pendingStart != null &&
+              pendingEnd != null &&
+              pendingEnd > pendingStart ? (
                 <span
                   className="pointer-events-none absolute inset-y-1.5 bg-amber-400/40"
                   style={{
@@ -314,46 +657,96 @@ export function AnnotationWorkspace({
               ) : null}
 
               <span
-                className="pointer-events-none absolute inset-y-0 w-px bg-foreground"
+                className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
                 style={{ left: toPercent(currentMs) }}
               />
             </button>
 
             <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
               <span>00:00.0</span>
+              {previewEndMs != null ? (
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  正在区间预览（将在 {formatTimecodeMs(previewEndMs)} 自动暂停）
+                </span>
+              ) : null}
               <span>{formatTimecodeMs(totalMs)}</span>
             </div>
           </div>
 
           {readOnly ? null : (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={markStart}
-              >
-                设为起点
-              </Button>
-              <Button type="button" size="sm" onClick={markEnd}>
-                设为终点并添加
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearPending}
-                disabled={pendingStart == null && pendingEnd == null}
-              >
-                <X data-icon="inline-start" />
-                清除打点
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                起点{' '}
-                {pendingStart != null ? formatTimecodeMs(pendingStart) : '—'}
-                {' · '}
-                终点 {pendingEnd != null ? formatTimecodeMs(pendingEnd) : '—'}
-              </span>
+            <div className="flex flex-col gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={markStart}
+                >
+                  设为起点 (I / [)
+                </Button>
+                <Button type="button" size="sm" onClick={markEnd}>
+                  设为终点并添加 (O / ])
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearPending}
+                  disabled={pendingStart == null && pendingEnd == null}
+                >
+                  <X data-icon="inline-start" />
+                  清除打点
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  起点{' '}
+                  {pendingStart != null ? formatTimecodeMs(pendingStart) : '—'}
+                  {' · '}
+                  终点 {pendingEnd != null ? formatTimecodeMs(pendingEnd) : '—'}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1 font-medium">
+                  <Keyboard className="size-3.5" />
+                  快捷键：
+                </span>
+                <span>
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    Space
+                  </kbd>{' '}
+                  播放/暂停
+                </span>
+                <span>
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    I
+                  </kbd>{' '}
+                  或{' '}
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    [
+                  </kbd>{' '}
+                  设为起点
+                </span>
+                <span>
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    O
+                  </kbd>{' '}
+                  或{' '}
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    ]
+                  </kbd>{' '}
+                  设为终点
+                </span>
+                <span>
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    ←
+                  </kbd>{' '}
+                  /{' '}
+                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
+                    →
+                  </kbd>{' '}
+                  步进 0.1s（配合 Shift 步进 1s）
+                </span>
+              </div>
             </div>
           )}
 
@@ -371,9 +764,22 @@ export function AnnotationWorkspace({
 
           {readOnly ? null : (
             <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-xs text-muted-foreground">
-                {dirty ? '有未保存的修改' : '当前内容已保存'}
-              </span>
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleUnclaim}
+                  disabled={isPending}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <RotateCcw data-icon="inline-start" />
+                  释放回任务池
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {dirty ? '● 有未保存的修改' : '✓ 当前内容已保存'}
+                </span>
+              </div>
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -400,79 +806,245 @@ export function AnnotationWorkspace({
 
       <Card>
         <CardHeader>
-          <CardTitle>时间段</CardTitle>
+          <CardTitle>时间段列表</CardTitle>
           <CardDescription>
-            {segments.length} 个片段 · 合计 {formatDuration(currentTotalMs)} ·
-            可为片段填写备注
+            {segments.length} 个片段 · 有效时长合计{' '}
+            {formatDuration(currentTotalMs)}
+            {readOnly ? ' · 点击播放可区间预览' : ' · 支持边界微调与动作标签'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {segments.length === 0 ? (
             <div className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
               还没有时间段。
-              {readOnly ? '' : '播放视频，在起点和终点分别打点。'}
+              {readOnly
+                ? ''
+                : '播放视频，用按钮或快捷键 I / O 在起点和终点分别打点。'}
             </div>
           ) : (
             <ul className="divide-y">
-              {segments.map((segment, index) => (
-                <li
-                  key={segment.id}
-                  className="flex flex-col gap-1.5 py-2.5"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="w-5 text-xs text-muted-foreground tabular-nums">
-                      {index + 1}
-                    </span>
-                    <span className="font-mono text-sm tabular-nums">
-                      {formatTimecodeMs(segment.startMs)} –{' '}
-                      {formatTimecodeMs(segment.endMs)}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatDuration(segment.endMs - segment.startMs)}
-                    </span>
-                    <span className="ml-auto flex items-center gap-1">
-                      <Button
+              {segments.map((segment, index) => {
+                const isPreviewing =
+                  activeSegmentId === segment.id && previewEndMs != null
+                const isEditing = editingSegmentId === segment.id
+
+                return (
+                  <li
+                    key={segment.id}
+                    className={`flex flex-col gap-2 py-3 transition-colors ${
+                      activeSegmentId === segment.id
+                        ? 'rounded-md bg-muted/40 px-2 -mx-2'
+                        : ''
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="w-5 text-xs font-medium text-muted-foreground tabular-nums">
+                        #{index + 1}
+                      </span>
+                      <button
                         type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="从该片段开始播放"
-                        onClick={() => playFrom(segment.startMs)}
+                        onClick={() => previewSegment(segment)}
+                        className="font-mono text-sm font-medium tabular-nums hover:underline"
+                        title="点击预览该片段（播到终点自动暂停）"
                       >
-                        <Play />
-                      </Button>
-                      {readOnly ? null : (
+                        {formatTimecodeMs(segment.startMs)} –{' '}
+                        {formatTimecodeMs(segment.endMs)}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        ({formatDuration(segment.endMs - segment.startMs)})
+                      </span>
+                      <span className="ml-auto flex items-center gap-1">
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant={isPreviewing ? 'default' : 'ghost'}
                           size="icon-sm"
-                          aria-label="删除该时间段"
-                          onClick={() => removeSegment(segment.id)}
+                          aria-label={
+                            isPreviewing ? '停止预览' : '区间预览该片段'
+                          }
+                          title={
+                            isPreviewing
+                              ? '停止预览'
+                              : '预览该片段（到终点自动暂停）'
+                          }
+                          onClick={() =>
+                            isPreviewing
+                              ? stopPreview()
+                              : previewSegment(segment)
+                          }
                         >
-                          <Trash2 />
+                          {isPreviewing ? <Pause /> : <Play />}
                         </Button>
-                      )}
-                    </span>
-                  </div>
+                        {readOnly ? null : (
+                          <>
+                            <Button
+                              type="button"
+                              variant={isEditing ? 'secondary' : 'ghost'}
+                              size="icon-sm"
+                              aria-label="微调起止时间"
+                              title="微调起止时间与动作标签"
+                              onClick={() =>
+                                setEditingSegmentId(
+                                  isEditing ? null : segment.id
+                                )
+                              }
+                            >
+                              <SlidersHorizontal />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="删除该时间段"
+                              title="删除该时间段"
+                              onClick={() => removeSegment(segment.id)}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </>
+                        )}
+                      </span>
+                    </div>
 
-                  {readOnly ? (
-                    segment.note ? (
-                      <p className="text-xs text-muted-foreground">
-                        备注：{segment.note}
-                      </p>
-                    ) : null
-                  ) : (
-                    <Input
-                      value={segment.note ?? ''}
-                      onChange={(event) =>
-                        updateNote(segment.id, event.target.value)
-                      }
-                      maxLength={500}
-                      placeholder="备注：这一段在做什么（选填）"
-                      className="h-7 text-xs"
-                    />
-                  )}
-                </li>
-              ))}
+                    {readOnly ? null : isEditing ? (
+                      <div className="flex flex-col gap-2 rounded-md border bg-background p-2.5 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-1">
+                          <span className="text-muted-foreground">
+                            起点：{formatTimecodeMs(segment.startMs)}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  segment.startMs - 100,
+                                  segment.endMs
+                                )
+                              }
+                            >
+                              -0.1s
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  segment.startMs + 100,
+                                  segment.endMs
+                                )
+                              }
+                            >
+                              +0.1s
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  readCurrentMs(),
+                                  segment.endMs
+                                )
+                              }
+                            >
+                              设为当前时间
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-1">
+                          <span className="text-muted-foreground">
+                            终点：{formatTimecodeMs(segment.endMs)}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  segment.startMs,
+                                  segment.endMs - 100
+                                )
+                              }
+                            >
+                              -0.1s
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  segment.startMs,
+                                  segment.endMs + 100
+                                )
+                              }
+                            >
+                              +0.1s
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              onClick={() =>
+                                updateSegmentBounds(
+                                  segment.id,
+                                  segment.startMs,
+                                  readCurrentMs()
+                                )
+                              }
+                            >
+                              设为当前时间
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1 pt-1">
+                          <span className="text-[11px] text-muted-foreground">
+                            快捷标签：
+                          </span>
+                          {ACTION_TAG_PRESETS.map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => applyPresetTag(segment.id, tag)}
+                              className="rounded border bg-muted/60 px-1.5 py-0.5 text-[11px] text-foreground transition-colors hover:bg-primary/15"
+                            >
+                              +{tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {readOnly ? (
+                      segment.note ? (
+                        <p className="text-xs text-muted-foreground">
+                          备注：{segment.note}
+                        </p>
+                      ) : null
+                    ) : (
+                      <Input
+                        value={segment.note ?? ''}
+                        onChange={(event) =>
+                          updateNote(segment.id, event.target.value)
+                        }
+                        maxLength={500}
+                        placeholder="动作标签或备注：这一段在做什么（点击右侧滑块图标可微调时间与选标签）"
+                        className="h-7 text-xs"
+                      />
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </CardContent>
