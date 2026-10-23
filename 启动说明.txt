@@ -1,0 +1,2 @@
+本项目使用 Nextjs + Supabase + shadcn/ui 开发，supabase数据库相关配置已经在.env中配置好，yarn install 安装 npm 包后直接 npm run dev 即可启动。
+项目也在 vercel 上部署了一份，可以直接访问 video-annotation-platform-eight.vercel.app 查看（需要境外网络），如需自行部署请阅读 README.md。
