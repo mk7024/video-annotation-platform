@@ -60,7 +60,6 @@ const USERS = [
 
 const VIDEOS = {
   aloha: {
-    id: 'abad0000-0000-4000-8000-000000000001',
     title: 'ALOHA 双臂做咖啡 · Episode 1',
     url: 'https://huggingface.co/datasets/lerobot/aloha_static_coffee/resolve/main/videos/observation.images.cam_high/chunk-000/file-000.mp4',
     dataset: 'lerobot/aloha_static_coffee',
@@ -70,7 +69,6 @@ const VIDEOS = {
     labels: ['抓取物体', '移动机械臂', '对准目标', '放置物体', '按压按钮', '机械臂复位'],
   },
   pusht: {
-    id: 'abad0000-0000-4000-8000-000000000002',
     title: 'Push-T 推方块 · Episode 1',
     url: 'https://huggingface.co/datasets/lerobot/pusht/resolve/main/videos/observation.image/chunk-000/file-000.mp4',
     dataset: 'lerobot/pusht',
@@ -162,11 +160,12 @@ async function main() {
 
   const adminId = userIds.admin
 
+  // 视频按 URL upsert 元数据（不携带 id：已有行可能是 0004 迁移回填生成的随机主键，
+  // upsert 改主键会被 tasks_video_id_fkey 外键拦截），再查回库里实际的 id 供任务引用
   const { error: videoError } = await admin
     .from('videos')
     .upsert(
       Object.values(VIDEOS).map((video) => ({
-        id: video.id,
         title: video.title,
         url: video.url,
         dataset: video.dataset,
@@ -177,12 +176,27 @@ async function main() {
     )
   if (videoError) fail('写入视频库', videoError)
 
+  const { data: videoRows, error: videoQueryError } = await admin
+    .from('videos')
+    .select('id, url')
+    .in('url', Object.values(VIDEOS).map((video) => video.url))
+  if (videoQueryError) fail('读取视频库', videoQueryError)
+
+  const videoIdByUrl = new Map(
+    (videoRows ?? []).map((row) => [row.url, row.id])
+  )
+  const alohaVideoId = videoIdByUrl.get(VIDEOS.aloha.url)
+  const pushtVideoId = videoIdByUrl.get(VIDEOS.pusht.url)
+  if (!alohaVideoId || !pushtVideoId) {
+    fail('读取视频库', new Error('视频 upsert 后未能按 URL 查回 id'))
+  }
+
   const tasks = [
     {
       id: TASKS.alohaFree,
       tenant_id: TENANTS[0].id,
       title: 'ALOHA 咖啡制作 · 有效片段标注',
-      video_id: VIDEOS.aloha.id,
+      video_id: alohaVideoId,
       guideline: VIDEOS.aloha.guideline,
       labels: VIDEOS.aloha.labels,
       status: 'unassigned',
@@ -194,7 +208,7 @@ async function main() {
       id: TASKS.pushtFree,
       tenant_id: TENANTS[0].id,
       title: 'Push-T 推方块 · 动作切分',
-      video_id: VIDEOS.pusht.id,
+      video_id: pushtVideoId,
       guideline: VIDEOS.pusht.guideline,
       labels: VIDEOS.pusht.labels,
       status: 'unassigned',
@@ -206,7 +220,7 @@ async function main() {
       id: TASKS.alohaSubmitted,
       tenant_id: TENANTS[0].id,
       title: 'ALOHA 咖啡制作 · 示例已提交',
-      video_id: VIDEOS.aloha.id,
+      video_id: alohaVideoId,
       guideline: VIDEOS.aloha.guideline,
       labels: VIDEOS.aloha.labels,
       status: 'submitted',
@@ -218,7 +232,7 @@ async function main() {
       id: TASKS.pushtSubmitted,
       tenant_id: TENANTS[1].id,
       title: 'Push-T 推方块 · 示例已提交',
-      video_id: VIDEOS.pusht.id,
+      video_id: pushtVideoId,
       guideline: VIDEOS.pusht.guideline,
       labels: VIDEOS.pusht.labels,
       status: 'submitted',
@@ -230,7 +244,7 @@ async function main() {
       id: TASKS.pushtFreeB,
       tenant_id: TENANTS[1].id,
       title: 'Push-T 推方块 · 待领取',
-      video_id: VIDEOS.pusht.id,
+      video_id: pushtVideoId,
       guideline: VIDEOS.pusht.guideline,
       labels: VIDEOS.pusht.labels,
       status: 'unassigned',
@@ -242,7 +256,7 @@ async function main() {
       id: TASKS.alohaDraft,
       tenant_id: TENANTS[0].id,
       title: 'ALOHA 咖啡制作 · 草稿示例',
-      video_id: VIDEOS.aloha.id,
+      video_id: alohaVideoId,
       guideline: VIDEOS.aloha.guideline,
       labels: VIDEOS.aloha.labels,
       status: 'claimed',
@@ -254,7 +268,7 @@ async function main() {
       id: TASKS.pushtSubmittedB,
       tenant_id: TENANTS[0].id,
       title: 'Push-T 推方块 · 双标一致性示例',
-      video_id: VIDEOS.pusht.id,
+      video_id: pushtVideoId,
       guideline: VIDEOS.pusht.guideline,
       labels: VIDEOS.pusht.labels,
       status: 'submitted',
