@@ -2,6 +2,8 @@ const MESSAGES: Record<string, string> = {
   TASK_UNAVAILABLE: '任务已被其他人领取或不存在',
   TASK_NOT_EDITABLE: '任务状态已变化，无法继续编辑',
   TASK_NOT_SUBMITTED: '只有已提交的任务才能打回重标',
+  REOPEN_NOTE_REQUIRED: '请填写打回原因，标注员需要知道哪里有问题',
+  INVALID_NOTE: '备注不能超过 1000 字',
   TASK_NOT_FOUND: '任务不存在',
   TASK_TENANT_MISMATCH: '标注员与任务不属于同一租户',
   TENANT_NOT_FOUND: '租户不存在',

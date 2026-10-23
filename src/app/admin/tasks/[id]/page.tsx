@@ -19,6 +19,7 @@ type AdminTaskDetail = {
   tenant_id: string
   guideline: string | null
   labels: string[] | null
+  reopen_note: string | null
   status: TaskStatus
   submitted_at: string | null
   tenant: unknown
@@ -56,7 +57,7 @@ export default async function AdminTaskDetailPage({
   const { data } = await supabase
     .from('tasks')
     .select(
-      'id, title, tenant_id, guideline, labels, status, submitted_at, tenant:tenants(name), assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
+      'id, title, tenant_id, guideline, labels, reopen_note, status, submitted_at, tenant:tenants(name), assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
     )
     .eq('id', id)
     .maybeSingle()
@@ -180,6 +181,17 @@ export default async function AdminTaskDetailPage({
           segments={segments}
           annotators={annotators}
         />
+
+        {task.reopen_note ? (
+          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
+            <p className="font-medium text-destructive">
+              待标注员处理的打回原因
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-foreground/80">
+              {task.reopen_note}
+            </p>
+          </div>
+        ) : null}
 
         {task.status === 'submitted' ? null : (
           <div className="mb-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">

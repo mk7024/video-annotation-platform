@@ -54,6 +54,8 @@ export function AdminTaskControls({
   const [notice, setNotice] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [assignTo, setAssignTo] = useState(annotators[0]?.id ?? '')
+  const [reopenNote, setReopenNote] = useState('')
+  const [reopenOpen, setReopenOpen] = useState(false)
 
   function handleAssign() {
     if (!assignTo) {
@@ -114,10 +116,9 @@ export function AdminTaskControls({
   }
 
   function handleReopen() {
-    const confirmed = window.confirm(
-      '确认将该已提交任务「打回重标」吗？\n打回后任务状态将退回“标注中”，当前片段保留为草稿供标注员修改，其有效工时将暂时从统计报表中移除。'
-    )
-    if (!confirmed) {
+    const note = reopenNote.trim()
+    if (!note) {
+      setError('请填写打回原因，标注员需要知道哪里有问题')
       return
     }
 
@@ -125,12 +126,14 @@ export function AdminTaskControls({
     setNotice(null)
 
     startTransition(async () => {
-      const result = await reopenTaskAction(taskId)
+      const result = await reopenTaskAction(taskId, note)
       if (!result.ok) {
         setError(result.error)
         return
       }
-      setNotice('已打回重标，标注员可继续修改并重新提交')
+      setReopenOpen(false)
+      setReopenNote('')
+      setNotice('已打回重标，标注员会在任务页看到打回原因')
       router.refresh()
     })
   }
@@ -218,10 +221,10 @@ export function AdminTaskControls({
               variant="destructive"
               size="sm"
               disabled={isPending}
-              onClick={handleReopen}
+              onClick={() => setReopenOpen((open) => !open)}
             >
               <Undo2 data-icon="inline-start" />
-              {isPending ? '处理中…' : '打回重标'}
+              {reopenOpen ? '收起' : '打回重标'}
             </Button>
           ) : null}
 
@@ -239,6 +242,47 @@ export function AdminTaskControls({
           ) : null}
         </div>
       </div>
+
+      {reopenOpen && status === 'submitted' ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3">
+          <div className="text-xs text-muted-foreground">
+            打回原因（必填，标注员会在任务页顶部看到）。写清具体位置和问题，例如「12.5s–18s
+            这段是机械臂复位，不应算有效片段」。打回后片段保留为草稿，工时从统计中移除。
+          </div>
+          <textarea
+            rows={3}
+            value={reopenNote}
+            onChange={(event) => setReopenNote(event.target.value)}
+            maxLength={1000}
+            placeholder="哪几段有问题、应该怎么改……"
+            className="w-full rounded-lg border border-input bg-background p-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">
+              {reopenNote.length}/1000
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setReopenOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={isPending || !reopenNote.trim()}
+                onClick={handleReopen}
+              >
+                {isPending ? '处理中…' : '确认打回'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <Alert variant="destructive">

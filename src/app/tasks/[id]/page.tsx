@@ -24,6 +24,7 @@ type TaskDetail = {
   title: string
   guideline: string | null
   labels: string[] | null
+  reopen_note: string | null
   status: TaskStatus
   assignee_id: string | null
   submitted_at: string | null
@@ -50,7 +51,7 @@ export default async function TaskDetailPage({
   const { data } = await supabase
     .from('tasks')
     .select(
-      'id, title, guideline, labels, status, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
+      'id, title, guideline, labels, reopen_note, status, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
     )
     .eq('id', id)
     .maybeSingle()
@@ -174,6 +175,16 @@ export default async function TaskDetailPage({
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
+            {canEdit && task.reopen_note ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm">
+                <p className="font-medium text-destructive">
+                  该任务被管理员打回，请按下面的原因修改后重新提交
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-foreground/80">
+                  {task.reopen_note}
+                </p>
+              </div>
+            ) : null}
             {readOnly ? (
               <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                 该任务已提交，以下时间段仅供查看。如需修改可联系管理员打回重标。

@@ -247,12 +247,25 @@ export async function assignTaskAction(
   return { ok: true }
 }
 
-export async function reopenTaskAction(taskId: string): Promise<ActionResult> {
+export async function reopenTaskAction(
+  taskId: string,
+  note: string
+): Promise<ActionResult> {
   await requireProfile('admin')
+
+  const trimmedNote = note.trim()
+  if (!trimmedNote) {
+    return { ok: false, error: '请填写打回原因，标注员需要知道哪里有问题' }
+  }
+  if (trimmedNote.length > 1000) {
+    return { ok: false, error: '打回原因不能超过 1000 字' }
+  }
+
   const supabase = await createClient()
 
   const { error } = await supabase.rpc('reopen_task', {
     p_task_id: taskId,
+    p_note: trimmedNote,
   })
 
   if (error) {
@@ -265,7 +278,11 @@ export async function reopenTaskAction(taskId: string): Promise<ActionResult> {
     ) {
       const { data: updated, error: updateErr } = await service
         .from('tasks')
-        .update({ status: 'claimed', submitted_at: null })
+        .update({
+          status: 'claimed',
+          submitted_at: null,
+          reopen_note: trimmedNote,
+        })
         .eq('id', taskId)
         .eq('status', 'submitted')
         .select('id')
