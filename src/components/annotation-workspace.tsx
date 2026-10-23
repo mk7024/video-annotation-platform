@@ -687,18 +687,20 @@ export function AnnotationWorkspace({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-      <Card>
-        <CardContent className="flex flex-col gap-4">
+    <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+      <Card className="min-w-0">
+        <CardContent className="flex min-w-0 flex-col gap-5">
           {guideline ? (
-            <div className="rounded-lg border border-amber-300/60 bg-amber-50/60 px-3 py-2.5 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
-              <p className="flex items-center gap-1.5 font-medium text-amber-900 dark:text-amber-300">
-                <BookOpen className="size-4" />
-                标注指引
-              </p>
-              <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-amber-900/80 dark:text-amber-200/80">
-                {guideline}
-              </p>
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200/70 bg-amber-50/50 p-3 text-sm dark:border-amber-500/20 dark:bg-amber-500/5">
+              <BookOpen className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
+              <div className="min-w-0">
+                <p className="font-medium text-amber-900 dark:text-amber-300">
+                  标注指引
+                </p>
+                <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap text-amber-950/80 [overflow-wrap:anywhere] dark:text-amber-100/80">
+                  {guideline}
+                </p>
+              </div>
             </div>
           ) : null}
 
@@ -723,297 +725,362 @@ export function AnnotationWorkspace({
             </Alert>
           ) : null}
 
-          {/* 步进与倍速工具栏 */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2">
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="mr-1 text-xs text-muted-foreground">
-                微调步进
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => stepByMs(-1000)}
-                title="后退 1 秒 (Shift + ←)"
-              >
-                -1.0s
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => stepByMs(-100)}
-                title="后退 0.1 秒 (←)"
-              >
-                -0.1s
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => stepByMs(100)}
-                title="前进 0.1 秒 (→)"
-              >
-                +0.1s
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => stepByMs(1000)}
-                title="前进 1 秒 (Shift + →)"
-              >
-                +1.0s
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <span className="mr-1 text-xs text-muted-foreground">倍速</span>
-              {SPEED_OPTIONS.map((rate) => (
-                <Button
-                  key={rate}
-                  type="button"
-                  variant={playbackRate === rate ? 'default' : 'ghost'}
-                  size="xs"
-                  onClick={() => changeSpeed(rate)}
-                >
-                  {rate}x
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <div className="flex flex-wrap items-center gap-1">
-                <span className="mr-1">时间轴</span>
+          <section
+            aria-label="视频时间轴与播放控制"
+            className="@container/timeline min-w-0 rounded-xl border bg-muted/40"
+          >
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 p-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h2 className="text-sm font-semibold">时间轴</h2>
+                <span className="whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    {formatTimecodeMs(currentMs)}
+                  </span>{' '}
+                  / {durationMs > 0 ? formatTimecodeMs(durationMs) : '--:--'}
+                </span>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-1 rounded-lg border bg-background p-1">
                 {ZOOM_OPTIONS.map((option) => (
                   <Button
                     key={option.label}
                     type="button"
                     variant={
-                      zoomWindowMs === option.ms ? 'default' : 'ghost'
+                      zoomWindowMs === option.ms ? 'secondary' : 'ghost'
                     }
                     size="xs"
+                    className="h-8 px-2.5"
+                    aria-pressed={zoomWindowMs === option.ms}
                     onClick={() => changeZoom(option.ms)}
                   >
                     {option.label}
                   </Button>
                 ))}
               </div>
-              <span className="font-mono tabular-nums">
-                {formatTimecodeMs(currentMs)} /{' '}
-                {durationMs > 0 ? formatTimecodeMs(durationMs) : '--:--'}
-              </span>
             </div>
 
-            {/* 时间刻度尺：按当前窗口自适应步长 */}
-            <div className="relative h-5 w-full select-none">
-              {rulerTicks.map((tick) => (
-                <span
-                  key={tick}
-                  className="absolute bottom-0 flex -translate-x-1/2 flex-col items-center"
-                  style={{ left: toViewPercent(tick) }}
-                >
-                  <span className="font-mono text-[10px] leading-none text-muted-foreground">
-                    {formatRulerLabel(tick, rulerStepMs)}
-                  </span>
-                  <span className="mt-0.5 h-1 w-px bg-border" />
-                </span>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              aria-label="视频时间段轨道"
-              onClick={handleTrackClick}
-              className="relative h-11 w-full cursor-pointer overflow-hidden rounded-lg border bg-muted"
-            >
-              {segments.map((segment, index) => {
-                const isActive = activeSegmentId === segment.id
-                return (
+            <div className="flex min-w-0 flex-col gap-2 px-3 pb-3">
+              <div className="relative h-6 w-full overflow-hidden select-none">
+                {rulerTicks.map((tick, index) => (
                   <span
-                    key={segment.id}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      previewSegment(segment)
-                    }}
-                    title={`#${index + 1} ${formatTimecodeMs(
-                      segment.startMs
-                    )} – ${formatTimecodeMs(segment.endMs)}${
-                      segment.note ? ` · ${segment.note}` : ''
-                    }（点击预览此区间）`}
-                    className={`absolute inset-y-1.5 flex items-center justify-center overflow-hidden rounded-sm text-[10px] font-medium text-primary-foreground transition-colors ${
-                      isActive
-                        ? 'bg-emerald-600 ring-2 ring-emerald-400'
-                        : 'bg-primary/75 hover:bg-primary'
+                    key={tick}
+                    className={`absolute bottom-0 flex flex-col ${
+                      index === 0
+                        ? 'items-start'
+                        : index === rulerTicks.length - 1
+                          ? '-translate-x-full items-end'
+                          : '-translate-x-1/2 items-center'
                     }`}
-                    style={{
-                      left: toViewPercent(segment.startMs),
-                      width: `${
-                        ((segment.endMs - segment.startMs) / Math.max(1, viewMs)) *
-                        100
-                      }%`,
-                      minWidth: '6px',
-                    }}
+                    style={{ left: toViewPercent(tick) }}
                   >
-                    <span className="truncate px-1">{index + 1}</span>
+                    <span className="font-mono text-[11px] leading-none tabular-nums text-muted-foreground">
+                      {formatRulerLabel(tick, rulerStepMs)}
+                    </span>
+                    <span className="mt-1 h-1 w-px bg-border" />
                   </span>
-                )
-              })}
+                ))}
+              </div>
 
-              {pendingStart != null &&
-              pendingEnd != null &&
-              pendingEnd > pendingStart ? (
-                <span
-                  className="pointer-events-none absolute inset-y-1.5 bg-amber-400/40"
-                  style={{
-                    left: toViewPercent(pendingStart),
-                    width: `${
-                      ((pendingEnd - pendingStart) / Math.max(1, viewMs)) * 100
-                    }%`,
-                  }}
-                />
-              ) : null}
-
-              {pendingStart != null ? (
-                <span
-                  className="pointer-events-none absolute inset-y-0 border-l-2 border-amber-500"
-                  style={{ left: toViewPercent(pendingStart) }}
-                />
-              ) : null}
-
-              <span
-                className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
-                style={{ left: toViewPercent(currentMs) }}
-              />
-            </button>
-
-            {/* 缩放时的全程缩略导航：蓝框是当前窗口，点击跳转 */}
-            {zoomWindowMs != null && viewMs < totalMs ? (
               <button
                 type="button"
-                aria-label="全程缩略导航"
-                onClick={handleOverviewClick}
-                className="relative h-3.5 w-full cursor-pointer overflow-hidden rounded border bg-muted"
-                title="全程缩略图：蓝框为当前窗口位置，点击任意位置跳转"
+                aria-label="视频时间段轨道"
+                onClick={handleTrackClick}
+                className="relative h-14 w-full cursor-pointer overflow-hidden rounded-lg border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
-                {segments.map((segment, index) => (
+                {segments.map((segment, index) => {
+                  const visibleStartMs = Math.max(segment.startMs, safeViewStartMs)
+                  const visibleEndMs = Math.min(segment.endMs, viewEndMs)
+                  if (visibleEndMs <= visibleStartMs) {
+                    return null
+                  }
+                  const isActive = activeSegmentId === segment.id
+                  return (
+                    <span
+                      key={segment.id}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        previewSegment(segment)
+                      }}
+                      title={`#${index + 1} ${formatTimecodeMs(
+                        segment.startMs
+                      )} – ${formatTimecodeMs(segment.endMs)}${
+                        segment.note ? ` · ${segment.note}` : ''
+                      }（点击预览此区间）`}
+                      className={`absolute inset-y-2 flex items-center justify-center overflow-hidden rounded text-xs font-medium tabular-nums transition-colors ${
+                        isActive
+                          ? 'bg-emerald-700 text-white ring-2 ring-emerald-400 dark:ring-emerald-300'
+                          : 'bg-primary/75 text-primary-foreground hover:bg-primary'
+                      }`}
+                      style={{
+                        left: toViewPercent(visibleStartMs),
+                        width: `${
+                          ((visibleEndMs - visibleStartMs) / Math.max(1, viewMs)) *
+                          100
+                        }%`,
+                        minWidth: '6px',
+                      }}
+                    >
+                      <span className="truncate px-1">{index + 1}</span>
+                    </span>
+                  )
+                })}
+
+                {pendingStart != null &&
+                pendingEnd != null &&
+                pendingEnd > pendingStart ? (
                   <span
-                    key={segment.id}
-                    className="absolute inset-y-0.5 rounded-sm bg-primary/60"
+                    className="pointer-events-none absolute inset-y-2 bg-amber-400/40 dark:bg-amber-400/30"
                     style={{
-                      left: toPercent(segment.startMs),
-                      width: toPercent(segment.endMs - segment.startMs),
-                      minWidth: '2px',
+                      left: toViewPercent(pendingStart),
+                      width: `${
+                        ((pendingEnd - pendingStart) / Math.max(1, viewMs)) * 100
+                      }%`,
                     }}
-                    title={`#${index + 1}`}
                   />
-                ))}
+                ) : null}
+
+                {pendingStart != null ? (
+                  <span
+                    className="pointer-events-none absolute inset-y-0 border-l-2 border-amber-600 dark:border-amber-400"
+                    style={{ left: toViewPercent(pendingStart) }}
+                  />
+                ) : null}
+
                 <span
-                  className="pointer-events-none absolute inset-y-0 border-x-2 border-sky-500 bg-sky-500/15"
-                  style={{
-                    left: toPercent(safeViewStartMs),
-                    width: `${(viewMs / Math.max(1, totalMs)) * 100}%`,
-                  }}
-                />
-                <span
-                  className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
-                  style={{ left: toPercent(currentMs) }}
+                  className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground ring-1 ring-background/70"
+                  style={{ left: toViewPercent(currentMs) }}
                 />
               </button>
-            ) : null}
 
-            <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
-              <span>{formatRulerLabel(viewStartMs, rulerStepMs)}</span>
-              {previewEndMs != null ? (
-                <span className="text-emerald-600 dark:text-emerald-400">
-                  正在区间预览（将在 {formatTimecodeMs(previewEndMs)} 自动暂停）
-                </span>
+              {zoomWindowMs != null && viewMs < totalMs ? (
+                <button
+                  type="button"
+                  aria-label="全程缩略导航"
+                  onClick={handleOverviewClick}
+                  className="relative h-6 w-full cursor-pointer overflow-hidden rounded-md border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  title="全程缩略图：蓝框为当前窗口位置，点击任意位置跳转"
+                >
+                  {segments.map((segment, index) => (
+                    <span
+                      key={segment.id}
+                      className="absolute inset-y-1 rounded-sm bg-primary/60"
+                      style={{
+                        left: toPercent(segment.startMs),
+                        width: toPercent(segment.endMs - segment.startMs),
+                        minWidth: '2px',
+                      }}
+                      title={`#${index + 1}`}
+                    />
+                  ))}
+                  <span
+                    className="pointer-events-none absolute inset-y-0 border-x-2 border-sky-600 bg-sky-500/15 dark:border-sky-400 dark:bg-sky-400/20"
+                    style={{
+                      left: toPercent(safeViewStartMs),
+                      width: `${(viewMs / Math.max(1, totalMs)) * 100}%`,
+                    }}
+                  />
+                  <span
+                    className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground ring-1 ring-background/70"
+                    style={{ left: toPercent(currentMs) }}
+                  />
+                </button>
               ) : null}
-              <span>{formatRulerLabel(viewEndMs, rulerStepMs)}</span>
+
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[11px] leading-relaxed text-muted-foreground">
+                <span className="whitespace-nowrap">
+                  窗口{' '}
+                  <span className="font-mono tabular-nums">
+                    {formatRulerLabel(viewStartMs, rulerStepMs)} –{' '}
+                    {formatRulerLabel(viewEndMs, rulerStepMs)}
+                  </span>
+                </span>
+                {previewEndMs != null ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    正在区间预览（将在{' '}
+                    <span className="font-mono tabular-nums">
+                      {formatTimecodeMs(previewEndMs)}
+                    </span>{' '}
+                    自动暂停）
+                  </span>
+                ) : null}
+                <span>点击空白处跳转 · 点击色块预览</span>
+              </div>
             </div>
 
-            <p className="text-[11px] text-muted-foreground">
-              点击空白处跳转，点击色块预览该片段并在终点自动暂停；长视频建议切到
-              1 分钟 / 15 秒档位精修边界。
-            </p>
-          </div>
+            <div className="grid gap-3 border-t p-3 @min-[38rem]/timeline:grid-cols-[minmax(0,1fr)_auto] @min-[38rem]/timeline:gap-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="w-12 shrink-0 text-xs text-muted-foreground">
+                  微调步进
+                </span>
+                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-lg border bg-background p-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="h-8 min-w-0 px-1 font-mono tabular-nums"
+                    onClick={() => stepByMs(-1000)}
+                    title="后退 1 秒 (Shift + ←)"
+                  >
+                    -1.0s
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="h-8 min-w-0 px-1 font-mono tabular-nums"
+                    onClick={() => stepByMs(-100)}
+                    title="后退 0.1 秒 (←)"
+                  >
+                    -0.1s
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="h-8 min-w-0 px-1 font-mono tabular-nums"
+                    onClick={() => stepByMs(100)}
+                    title="前进 0.1 秒 (→)"
+                  >
+                    +0.1s
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="h-8 min-w-0 px-1 font-mono tabular-nums"
+                    onClick={() => stepByMs(1000)}
+                    title="前进 1 秒 (Shift + →)"
+                  >
+                    +1.0s
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="w-12 shrink-0 text-xs text-muted-foreground @min-[38rem]/timeline:w-auto">
+                  倍速
+                </span>
+                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-lg border bg-background p-1">
+                  {SPEED_OPTIONS.map((rate) => (
+                    <Button
+                      key={rate}
+                      type="button"
+                      variant={playbackRate === rate ? 'secondary' : 'ghost'}
+                      size="xs"
+                      className="h-8 min-w-0 px-2 font-mono tabular-nums"
+                      aria-pressed={playbackRate === rate}
+                      onClick={() => changeSpeed(rate)}
+                    >
+                      {rate}x
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
 
           {readOnly ? null : (
-            <div className="flex flex-col gap-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={markStart}
-                >
-                  设为起点 (I / [)
-                </Button>
-                <Button type="button" size="sm" onClick={markEnd}>
-                  设为终点并添加 (O / ])
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearPending}
-                  disabled={pendingStart == null && pendingEnd == null}
-                >
-                  <X data-icon="inline-start" />
-                  清除打点
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  起点{' '}
-                  {pendingStart != null ? formatTimecodeMs(pendingStart) : '—'}
-                  {' · '}
-                  终点 {pendingEnd != null ? formatTimecodeMs(pendingEnd) : '—'}
-                </span>
+            <div className="flex flex-col gap-2">
+              <div className="@container/mark rounded-xl border border-amber-200/80 bg-amber-50/40 p-3 dark:border-amber-500/25 dark:bg-amber-500/5">
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-auto min-h-11 flex-wrap gap-x-3 gap-y-1 border-amber-300 bg-background px-3 py-2 text-sm whitespace-normal text-amber-900 hover:bg-amber-100 hover:text-amber-950 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20 dark:hover:text-amber-100"
+                    onClick={markStart}
+                  >
+                    设为起点
+                    <kbd className="whitespace-nowrap rounded border border-current/20 px-1.5 py-0.5 font-mono text-[11px]">
+                      I / [
+                    </kbd>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-auto min-h-11 flex-wrap gap-x-3 gap-y-1 bg-amber-400 px-3 py-2 text-sm whitespace-normal text-amber-950 shadow-sm hover:bg-amber-300 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
+                    onClick={markEnd}
+                  >
+                    设为终点并添加
+                    <kbd className="whitespace-nowrap rounded border border-current/20 px-1.5 py-0.5 font-mono text-[11px]">
+                      O / ]
+                    </kbd>
+                  </Button>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                    <span>
+                      起点{' '}
+                      <span className="font-mono font-medium tabular-nums text-amber-900 dark:text-amber-200">
+                        {pendingStart != null ? formatTimecodeMs(pendingStart) : '—'}
+                      </span>
+                    </span>
+                    <span>
+                      终点{' '}
+                      <span className="font-mono font-medium tabular-nums text-amber-900 dark:text-amber-200">
+                        {pendingEnd != null ? formatTimecodeMs(pendingEnd) : '—'}
+                      </span>
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-9 text-xs text-muted-foreground"
+                    onClick={clearPending}
+                    disabled={pendingStart == null && pendingEnd == null}
+                  >
+                    <X data-icon="inline-start" />
+                    清除打点
+                  </Button>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1 font-medium">
-                  <Keyboard className="size-3.5" />
-                  快捷键：
-                </span>
-                <span>
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    Space
-                  </kbd>{' '}
-                  播放/暂停
-                </span>
-                <span>
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    I
-                  </kbd>{' '}
-                  或{' '}
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    [
-                  </kbd>{' '}
-                  设为起点
-                </span>
-                <span>
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    O
-                  </kbd>{' '}
-                  或{' '}
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    ]
-                  </kbd>{' '}
-                  设为终点
-                </span>
-                <span>
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    ←
-                  </kbd>{' '}
-                  /{' '}
-                  <kbd className="rounded border bg-muted px-1 py-0.5 font-mono">
-                    →
-                  </kbd>{' '}
-                  步进 0.1s（配合 Shift 步进 1s）
-                </span>
-              </div>
+              <details className="rounded-lg text-xs text-muted-foreground">
+                <summary className="w-fit cursor-pointer rounded-md px-1 py-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="ml-1 inline-flex items-center gap-2 align-middle">
+                    <Keyboard className="size-3.5" />
+                    操作说明与快捷键
+                  </span>
+                </summary>
+                <div className="mt-2 space-y-3 rounded-lg border bg-muted/30 p-3 leading-relaxed">
+                  <p>
+                    点击色块预览该片段并在终点自动暂停；长视频建议切到
+                    1 分钟 / 15 秒档位精修边界。
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+                    <span>
+                      <kbd className="rounded border bg-background px-1.5 py-0.5 font-mono">
+                        Space
+                      </kbd>{' '}
+                      播放/暂停
+                    </span>
+                    <span>
+                      <kbd className="rounded border bg-background px-1.5 py-0.5 font-mono">
+                        I / [
+                      </kbd>{' '}
+                      设为起点
+                    </span>
+                    <span>
+                      <kbd className="rounded border bg-background px-1.5 py-0.5 font-mono">
+                        O / ]
+                      </kbd>{' '}
+                      设为终点
+                    </span>
+                    <span>
+                      <kbd className="rounded border bg-background px-1.5 py-0.5 font-mono">
+                        ← / →
+                      </kbd>{' '}
+                      步进 0.1s（配合 Shift 步进 1s）
+                    </span>
+                    <span>
+                      <kbd className="rounded border bg-background px-1.5 py-0.5 font-mono">
+                        Esc
+                      </kbd>{' '}
+                      清除打点
+                    </span>
+                  </div>
+                </div>
+              </details>
             </div>
           )}
 
@@ -1024,78 +1091,92 @@ export function AnnotationWorkspace({
           ) : null}
 
           {notice ? (
-            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
               {notice}
             </p>
           ) : null}
 
           {readOnly ? null : (
-            <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
+            <div className="@container/actions flex flex-col gap-3 border-t pt-4">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {autosaveState === 'saving'
+                  ? '● 自动保存中…'
+                  : autosaveState === 'error' && dirty
+                    ? '⚠ 自动保存失败，请手动保存'
+                    : dirty
+                      ? '● 修改将在片刻后自动保存'
+                      : '✓ 当前内容已保存'}
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={handleUnclaim}
                   disabled={isPending}
-                  className="text-muted-foreground hover:text-destructive"
+                  className="h-11 text-muted-foreground hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/10"
                 >
                   <RotateCcw data-icon="inline-start" />
                   释放回任务池
                 </Button>
-                <span className="text-xs text-muted-foreground">
-                  {autosaveState === 'saving'
-                    ? '● 自动保存中…'
-                    : autosaveState === 'error' && dirty
-                      ? '⚠ 自动保存失败，请手动保存'
-                      : dirty
-                        ? '● 修改将在片刻后自动保存'
-                        : '✓ 当前内容已保存'}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSave}
-                  disabled={isPending}
-                >
-                  <Save data-icon="inline-start" />
-                  保存草稿
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={isPending || segments.length === 0}
-                >
-                  <Send data-icon="inline-start" />
-                  {isPending ? '处理中…' : '提交任务'}
-                </Button>
+                <div className="ml-auto grid basis-full grid-cols-2 gap-3 @min-[30rem]/actions:basis-auto">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 px-4"
+                    onClick={handleSave}
+                    disabled={isPending}
+                  >
+                    <Save data-icon="inline-start" />
+                    保存草稿
+                  </Button>
+                  <Button
+                    type="button"
+                    className="h-11 px-5 font-semibold shadow-sm"
+                    onClick={handleSubmit}
+                    disabled={isPending || segments.length === 0}
+                  >
+                    <Send data-icon="inline-start" />
+                    {isPending ? '处理中…' : '提交任务'}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>时间段列表</CardTitle>
-          <CardDescription>
-            {segments.length} 个片段 · 有效时长合计{' '}
-            {formatDuration(currentTotalMs)}
-            {readOnly ? ' · 点击播放可区间预览' : ' · 支持边界微调与动作标签'}
+      <Card className="min-w-0 gap-0 py-0">
+        <CardHeader className="gap-3 border-b bg-muted/30 p-4">
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2 font-semibold">
+            时间段列表
+            <span className="rounded-md border bg-background px-2 py-1 text-xs font-normal text-muted-foreground">
+              <span className="font-mono font-semibold tabular-nums text-foreground">
+                {segments.length}
+              </span>{' '}
+              个片段
+            </span>
+          </CardTitle>
+          <CardDescription className="space-y-2 text-xs leading-relaxed">
+            <p>
+              有效时长合计{' '}
+              <span className="font-mono font-medium tabular-nums text-foreground">
+                {formatDuration(currentTotalMs)}
+              </span>
+            </p>
+            <p>{readOnly ? '点击播放可区间预览' : '支持边界微调与动作标签'}</p>
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4">
           {segments.length === 0 ? (
-            <div className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-              还没有时间段。
+            <div className="rounded-xl border border-dashed bg-muted/20 px-5 py-10 text-center text-sm leading-7 text-muted-foreground">
+              <p className="font-medium text-foreground">还没有时间段。</p>
               {readOnly
                 ? ''
                 : '播放视频，用按钮或快捷键 I / O 在起点和终点分别打点。'}
             </div>
           ) : (
-            <ul className="divide-y">
+            <ul className="flex min-w-0 flex-col gap-3">
               {segments.map((segment, index) => {
                 const isPreviewing =
                   activeSegmentId === segment.id && previewEndMs != null
@@ -1104,33 +1185,44 @@ export function AnnotationWorkspace({
                 return (
                   <li
                     key={segment.id}
-                    className={`flex flex-col gap-2 py-3 transition-colors ${
+                    className={`flex min-w-0 flex-col gap-3 rounded-xl border p-3 transition-colors ${
                       activeSegmentId === segment.id
-                        ? 'rounded-md bg-muted/40 px-2 -mx-2'
-                        : ''
+                        ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-500/50 dark:bg-emerald-500/10'
+                        : 'border-border bg-background'
                     }`}
                   >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="w-5 text-xs font-medium text-muted-foreground tabular-nums">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-xs font-medium tabular-nums text-muted-foreground">
                         #{index + 1}
                       </span>
                       <button
                         type="button"
                         onClick={() => previewSegment(segment)}
-                        className="font-mono text-sm font-medium tabular-nums hover:underline"
+                        className="flex min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md py-2 text-left font-mono text-sm font-medium tabular-nums underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                         title="点击预览该片段（播到终点自动暂停）"
                       >
-                        {formatTimecodeMs(segment.startMs)} –{' '}
-                        {formatTimecodeMs(segment.endMs)}
+                        <span className="whitespace-nowrap">{formatTimecodeMs(segment.startMs)}</span>
+                        <span className="text-muted-foreground">–</span>
+                        <span className="whitespace-nowrap">{formatTimecodeMs(segment.endMs)}</span>
                       </button>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs text-muted-foreground">
-                        ({formatDuration(segment.endMs - segment.startMs)})
+                        时长{' '}
+                        <span className="font-mono tabular-nums">
+                          {formatDuration(segment.endMs - segment.startMs)}
+                        </span>
                       </span>
-                      <span className="ml-auto flex items-center gap-1">
+                      <span className="ml-auto flex items-center gap-2">
                         <Button
                           type="button"
                           variant={isPreviewing ? 'default' : 'ghost'}
                           size="icon-sm"
+                          className={`size-11 ${
+                            isPreviewing
+                              ? 'bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-700 dark:hover:bg-emerald-600'
+                              : 'text-muted-foreground'
+                          }`}
                           aria-label={
                             isPreviewing ? '停止预览' : '区间预览该片段'
                           }
@@ -1153,7 +1245,9 @@ export function AnnotationWorkspace({
                               type="button"
                               variant={isEditing ? 'secondary' : 'ghost'}
                               size="icon-sm"
+                              className="size-11 text-muted-foreground aria-expanded:text-foreground"
                               aria-label="微调起止时间"
+                              aria-expanded={isEditing}
                               title="微调起止时间与动作标签"
                               onClick={() =>
                                 setEditingSegmentId(
@@ -1167,6 +1261,7 @@ export function AnnotationWorkspace({
                               type="button"
                               variant="ghost"
                               size="icon-sm"
+                              className="size-11 text-muted-foreground hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/10"
                               aria-label="删除该时间段"
                               title="删除该时间段"
                               onClick={() => removeSegment(segment.id)}
@@ -1179,16 +1274,20 @@ export function AnnotationWorkspace({
                     </div>
 
                     {readOnly ? null : isEditing ? (
-                      <div className="flex flex-col gap-2 rounded-md border bg-background p-2.5 text-xs">
-                        <div className="flex flex-wrap items-center justify-between gap-1">
-                          <span className="text-muted-foreground">
-                            起点：{formatTimecodeMs(segment.startMs)}
-                          </span>
-                          <div className="flex items-center gap-1">
+                      <div className="flex min-w-0 flex-col gap-4 rounded-lg border bg-muted/30 p-3 text-xs">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-muted-foreground">起点</span>
+                            <span className="font-mono tabular-nums">
+                              {formatTimecodeMs(segment.startMs)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)] gap-2">
                             <Button
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-11 min-w-0 px-1 font-mono tabular-nums"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1203,6 +1302,7 @@ export function AnnotationWorkspace({
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-11 min-w-0 px-1 font-mono tabular-nums"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1217,6 +1317,7 @@ export function AnnotationWorkspace({
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-auto min-h-11 min-w-0 px-2 py-1 whitespace-normal"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1230,15 +1331,19 @@ export function AnnotationWorkspace({
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center justify-between gap-1">
-                          <span className="text-muted-foreground">
-                            终点：{formatTimecodeMs(segment.endMs)}
-                          </span>
-                          <div className="flex items-center gap-1">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-muted-foreground">终点</span>
+                            <span className="font-mono tabular-nums">
+                              {formatTimecodeMs(segment.endMs)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)] gap-2">
                             <Button
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-11 min-w-0 px-1 font-mono tabular-nums"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1253,6 +1358,7 @@ export function AnnotationWorkspace({
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-11 min-w-0 px-1 font-mono tabular-nums"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1267,6 +1373,7 @@ export function AnnotationWorkspace({
                               type="button"
                               variant="outline"
                               size="xs"
+                              className="h-auto min-h-11 min-w-0 px-2 py-1 whitespace-normal"
                               onClick={() =>
                                 updateSegmentBounds(
                                   segment.id,
@@ -1280,16 +1387,16 @@ export function AnnotationWorkspace({
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-1 pt-1">
-                          <span className="text-[11px] text-muted-foreground">
-                            快捷标签：
+                        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                          <span className="w-full text-muted-foreground">
+                            快捷标签
                           </span>
                           {presetTags.map((tag) => (
                             <button
                               key={tag}
                               type="button"
                               onClick={() => applyPresetTag(segment.id, tag)}
-                              className="rounded border bg-muted/60 px-1.5 py-0.5 text-[11px] text-foreground transition-colors hover:bg-primary/15"
+                              className="min-h-11 max-w-full rounded-lg border bg-background px-2.5 py-2 text-left text-xs text-foreground transition-colors outline-none [overflow-wrap:anywhere] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               +{tag}
                             </button>
@@ -1300,7 +1407,7 @@ export function AnnotationWorkspace({
 
                     {readOnly ? (
                       segment.note ? (
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
                           备注：{segment.note}
                         </p>
                       ) : null
@@ -1311,8 +1418,10 @@ export function AnnotationWorkspace({
                           updateNote(segment.id, event.target.value)
                         }
                         maxLength={500}
-                        placeholder="动作标签或备注：这一段在做什么（点击右侧滑块图标可微调时间与选标签）"
-                        className="h-7 text-xs"
+                        aria-label={`片段 ${index + 1} 的动作标签或备注`}
+                        placeholder="动作标签或备注（选填）"
+                        title="点击滑块图标可微调时间与选标签"
+                        className="h-11 min-w-0 bg-background text-xs"
                       />
                     )}
                   </li>

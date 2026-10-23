@@ -93,7 +93,7 @@ export default async function TaskDetailPage({
   return (
     <>
       <AppHeader profile={profile} />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full min-w-0 max-w-[1440px] flex-1 px-4 py-6 sm:px-6 xl:px-8">
         <Link
           href="/tasks"
           className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -103,14 +103,14 @@ export default async function TaskDetailPage({
         </Link>
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">
+              <h1 className="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">
                 {task.title}
               </h1>
               <StatusBadge status={task.status} />
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
               视频：{videoTitle ?? '—'}
               {videoDataset ? `（${videoDataset}）` : ''}
               {` · 租户：${profile.tenant_name ?? '—'}`}
