@@ -10,6 +10,7 @@ import {
 } from '@/app/admin/actions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { formatDuration, formatTimecodeMs } from '@/lib/format'
 import type { SegmentInput, TaskStatus } from '@/lib/types'
 
 type AnnotatorOption = { id: string; name: string }
@@ -54,8 +55,44 @@ export function AdminTaskControls({
   const [notice, setNotice] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [assignTo, setAssignTo] = useState(annotators[0]?.id ?? '')
-  const [reopenNote, setReopenNote] = useState('')
+  const [problemIndexes, setProblemIndexes] = useState<number[]>([])
+  const [extraNote, setExtraNote] = useState('')
   const [reopenOpen, setReopenOpen] = useState(false)
+
+  function toggleProblem(index: number) {
+    setProblemIndexes((previous) =>
+      previous.includes(index)
+        ? previous.filter((item) => item !== index)
+        : [...previous, index]
+    )
+  }
+
+  // 拼装打回原因：选中的片段（按时间码指认）+ 补充说明，标注员可直接对照自己的片段列表改
+  function composeReopenNote(): string {
+    const parts: string[] = []
+    if (problemIndexes.length > 0) {
+      const segTexts = [...problemIndexes]
+        .sort((a, b) => a - b)
+        .map((index) => {
+          const segment = segments[index]
+          if (!segment) {
+            return null
+          }
+          const noteSuffix = segment.note ? `，备注「${segment.note}」` : ''
+          return `#${index + 1}（${formatTimecodeMs(segment.startMs)}–${formatTimecodeMs(segment.endMs)}${noteSuffix}）`
+        })
+        .filter(Boolean)
+      if (segTexts.length > 0) {
+        parts.push(`问题片段：${segTexts.join('、')}`)
+      }
+    }
+    if (extraNote.trim()) {
+      parts.push(extraNote.trim())
+    }
+    return parts.join('\n')
+  }
+
+  const reopenNote = composeReopenNote()
 
   function handleAssign() {
     if (!assignTo) {
@@ -118,7 +155,7 @@ export function AdminTaskControls({
   function handleReopen() {
     const note = reopenNote.trim()
     if (!note) {
-      setError('请填写打回原因，标注员需要知道哪里有问题')
+      setError('请点选有问题的片段，或填写补充说明')
       return
     }
 
@@ -132,7 +169,8 @@ export function AdminTaskControls({
         return
       }
       setReopenOpen(false)
-      setReopenNote('')
+      setProblemIndexes([])
+      setExtraNote('')
       setNotice('已打回重标，标注员会在任务页看到打回原因')
       router.refresh()
     })
@@ -244,19 +282,61 @@ export function AdminTaskControls({
       </div>
 
       {reopenOpen && status === 'submitted' ? (
-        <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3">
+        <div className="flex flex-col gap-2.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3">
           <div className="text-xs text-muted-foreground">
-            打回原因（必填，标注员会在任务页顶部看到）。写清具体位置和问题，例如「12.5s–18s
-            这段是机械臂复位，不应算有效片段」。打回后片段保留为草稿，工时从统计中移除。
+            点选有问题的片段（可多选），选填补充说明。打回后片段保留为草稿、工时从统计中移除，标注员任务页会显示下面的最终原因。
           </div>
+
+          {segments.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {segments.map((segment, index) => {
+                const selected = problemIndexes.includes(index)
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => toggleProblem(index)}
+                    aria-pressed={selected}
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+                      selected
+                        ? 'border-destructive/60 bg-destructive/15 font-medium text-destructive'
+                        : 'bg-background text-muted-foreground hover:border-destructive/40 hover:text-foreground'
+                    }`}
+                  >
+                    <span className="tabular-nums">#{index + 1}</span>
+                    <span className="font-mono tabular-nums">
+                      {formatTimecodeMs(segment.startMs)}–{formatTimecodeMs(segment.endMs)}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {formatDuration(segment.endMs - segment.startMs)}
+                    </span>
+                    {segment.note ? (
+                      <span className="max-w-24 truncate text-[11px]">
+                        {segment.note}
+                      </span>
+                    ) : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
           <textarea
-            rows={3}
-            value={reopenNote}
-            onChange={(event) => setReopenNote(event.target.value)}
+            rows={2}
+            value={extraNote}
+            onChange={(event) => setExtraNote(event.target.value)}
             maxLength={1000}
-            placeholder="哪几段有问题、应该怎么改……"
+            placeholder="补充说明（选填）：例如「#2 是复位动作应删除」或整体性问题……"
             className="w-full rounded-lg border border-input bg-background p-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
+
+          {reopenNote ? (
+            <div className="rounded-md border bg-background px-2.5 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">标注员将看到：</span>
+              <p className="mt-0.5 whitespace-pre-wrap">{reopenNote}</p>
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground">
               {reopenNote.length}/1000
