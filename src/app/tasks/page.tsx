@@ -3,7 +3,7 @@ import { Suspense } from 'react'
 import { AppHeader } from '@/components/app-header'
 import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { buttonVariants } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -30,10 +31,14 @@ type TaskRow = {
   id: string
   title: string
   status: TaskStatus
+  video_id: string
   assignee_id: string | null
   submitted_at: string | null
   assignee: unknown
+  video: unknown
 }
+
+type VideoOption = { id: string; title: string; dataset: string | null }
 
 type MyWorkloadRow = {
   task_id: string
@@ -43,7 +48,7 @@ type MyWorkloadRow = {
 }
 
 type TasksPageProps = {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; video?: string }>
 }
 
 function getTodayShanghaiDate(): string {
@@ -80,9 +85,11 @@ function SummaryCard({
 async function TaskList({
   profile,
   error,
+  videoParam,
 }: {
   profile: Profile
   error?: string
+  videoParam?: string
 }) {
   const supabase = await createClient()
 
@@ -93,7 +100,7 @@ async function TaskList({
     supabase
       .from('tasks')
       .select(
-        'id, title, status, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name)'
+        'id, title, status, video_id, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, title, dataset)'
       )
       .eq('tenant_id', profile.tenant_id!)
       .order('created_at', { ascending: false }),
@@ -110,11 +117,29 @@ async function TaskList({
   const tasks = (data ?? []) as TaskRow[]
   const myWorkloads = (workloadData ?? []) as MyWorkloadRow[]
 
-  const available = tasks.filter((task) => task.status === 'unassigned')
-  const mineInProgress = tasks.filter(
+  const videoMap = new Map<string, VideoOption>()
+  for (const task of tasks) {
+    const id = relationField(task.video, 'id')
+    if (id && !videoMap.has(id)) {
+      videoMap.set(id, {
+        id,
+        title: relationField(task.video, 'title') ?? id,
+        dataset: relationField(task.video, 'dataset'),
+      })
+    }
+  }
+  const videos = [...videoMap.values()]
+  const videoFilter =
+    videoParam && videoMap.has(videoParam) ? videoParam : undefined
+  const visibleTasks = videoFilter
+    ? tasks.filter((task) => task.video_id === videoFilter)
+    : tasks
+
+  const available = visibleTasks.filter((task) => task.status === 'unassigned')
+  const mineInProgress = visibleTasks.filter(
     (task) => task.status === 'claimed' && task.assignee_id === profile.id
   )
-  const mineSubmitted = tasks.filter(
+  const mineSubmitted = visibleTasks.filter(
     (task) => task.status === 'submitted' && task.assignee_id === profile.id
   )
 
@@ -180,6 +205,39 @@ async function TaskList({
         />
       </div>
 
+      {videos.length > 1 ? (
+        <Card size="sm">
+          <CardContent>
+            <form method="get" className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="videoFilter">按视频筛选</Label>
+                <select
+                  id="videoFilter"
+                  name="video"
+                  defaultValue={videoFilter ?? 'all'}
+                  className="h-8 w-64 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                >
+                  <option value="all">全部视频</option>
+                  {videos.map((video) => (
+                    <option key={video.id} value={video.id}>
+                      {video.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button type="submit" variant="outline">
+                筛选
+              </Button>
+              {videoFilter ? (
+                <Link href="/tasks" className={buttonVariants({ variant: 'ghost' })}>
+                  重置
+                </Link>
+              ) : null}
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>任务列表</CardTitle>
@@ -188,15 +246,18 @@ async function TaskList({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {tasks.length === 0 ? (
+          {visibleTasks.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              本租户还没有任务，等管理员发布。
+              {tasks.length === 0
+                ? '本租户还没有任务，等管理员发布。'
+                : '所选视频下还没有任务。'}
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>任务</TableHead>
+                  <TableHead className="hidden md:table-cell">视频</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>领取人</TableHead>
                   <TableHead>提交时间</TableHead>
@@ -204,18 +265,19 @@ async function TaskList({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tasks.map((task) => {
+                {visibleTasks.map((task) => {
                   const assigneeName = relationField(
                     task.assignee,
                     'display_name'
                   )
+                  const videoTitle = relationField(task.video, 'title')
                   const isMine = task.assignee_id === profile.id
                   const canOpenDetail =
                     task.status === 'unassigned' || isMine
 
                   return (
                     <TableRow key={task.id}>
-                      <TableCell className="max-w-[22rem] truncate font-medium">
+                      <TableCell className="max-w-[16rem] truncate font-medium">
                         {canOpenDetail ? (
                           <Link
                             href={`/tasks/${task.id}`}
@@ -228,6 +290,9 @@ async function TaskList({
                             {task.title}
                           </span>
                         )}
+                      </TableCell>
+                      <TableCell className="hidden max-w-[12rem] truncate text-muted-foreground md:table-cell">
+                        {videoTitle ?? '—'}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={task.status} />
@@ -327,7 +392,7 @@ async function TaskList({
 }
 
 export default async function TasksPage({ searchParams }: TasksPageProps) {
-  const { error } = await searchParams
+  const { error, video } = await searchParams
   const profile = await requireProfile('annotator')
 
   return (
@@ -337,7 +402,7 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
         <Suspense
           fallback={<p className="text-sm text-muted-foreground">加载中…</p>}
         >
-          <TaskList profile={profile} error={error} />
+          <TaskList profile={profile} error={error} videoParam={video} />
         </Suspense>
       </main>
     </>

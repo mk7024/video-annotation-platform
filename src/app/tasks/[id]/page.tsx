@@ -22,11 +22,13 @@ import { AnnotationWorkspace } from '@/components/annotation-workspace'
 type TaskDetail = {
   id: string
   title: string
-  video_url: string
+  guideline: string | null
+  labels: string[] | null
   status: TaskStatus
   assignee_id: string | null
   submitted_at: string | null
   assignee: unknown
+  video: unknown
 }
 
 type SegmentRow = {
@@ -48,7 +50,7 @@ export default async function TaskDetailPage({
   const { data } = await supabase
     .from('tasks')
     .select(
-      'id, title, video_url, status, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name)'
+      'id, title, guideline, labels, status, assignee_id, submitted_at, assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
     )
     .eq('id', id)
     .maybeSingle()
@@ -59,6 +61,13 @@ export default async function TaskDetailPage({
 
   const task = data as TaskDetail
   const assigneeName = relationField(task.assignee, 'display_name')
+  const videoId = relationField(task.video, 'id')
+  const videoUrl = relationField(task.video, 'url')
+  const videoTitle = relationField(task.video, 'title')
+  const videoDataset = relationField(task.video, 'dataset')
+  const videoDurationMs = Number(
+    (task.video as { duration_ms?: number | null } | null)?.duration_ms ?? 0
+  )
   const isMine = task.assignee_id === profile.id
   const isUnassigned = task.status === 'unassigned'
   const ownedByOther = !isUnassigned && !isMine
@@ -101,22 +110,26 @@ export default async function TaskDetailPage({
               <StatusBadge status={task.status} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              租户：{profile.tenant_name ?? '—'}
+              视频：{videoTitle ?? '—'}
+              {videoDataset ? `（${videoDataset}）` : ''}
+              {` · 租户：${profile.tenant_name ?? '—'}`}
               {assigneeName ? ` · 领取人：${assigneeName}` : ''}
               {task.submitted_at
                 ? ` · 提交于 ${formatShanghaiDateTime(task.submitted_at)}`
                 : ''}
             </p>
           </div>
-          <a
-            href={task.video_url}
-            target="_blank"
-            rel="noreferrer"
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-          >
-            <ExternalLink data-icon="inline-start" />
-            原始视频
-          </a>
+          {videoUrl ? (
+            <a
+              href={videoUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              <ExternalLink data-icon="inline-start" />
+              原始视频
+            </a>
+          ) : null}
         </div>
 
         {isUnassigned ? (
@@ -127,7 +140,17 @@ export default async function TaskDetailPage({
                 领取后任务会锁定给你，再开始标注时间段。
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-3">
+              {task.guideline ? (
+                <div className="rounded-lg border border-amber-300/60 bg-amber-50/60 px-3 py-2.5 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <p className="font-medium text-amber-900 dark:text-amber-300">
+                    标注指引
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap text-amber-900/80 dark:text-amber-200/80">
+                    {task.guideline}
+                  </p>
+                </div>
+              ) : null}
               <form action={claimTaskAction}>
                 <input type="hidden" name="taskId" value={task.id} />
                 <button type="submit" className={buttonVariants()}>
@@ -158,7 +181,11 @@ export default async function TaskDetailPage({
             ) : null}
             <AnnotationWorkspace
               taskId={task.id}
-              videoUrl={task.video_url}
+              videoUrl={videoUrl ?? ''}
+              videoId={videoId ?? undefined}
+              initialDurationMs={videoDurationMs > 0 ? videoDurationMs : null}
+              guideline={task.guideline}
+              labels={task.labels}
               initialSegments={segments}
               readOnly={readOnly}
             />

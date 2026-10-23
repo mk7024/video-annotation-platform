@@ -2,24 +2,28 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Download, RotateCcw, Undo2 } from 'lucide-react'
+import { Download, RotateCcw, Undo2, UserCheck } from 'lucide-react'
 import {
   adminUnclaimTaskAction,
+  assignTaskAction,
   reopenTaskAction,
 } from '@/app/admin/actions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import type { SegmentInput, TaskStatus } from '@/lib/types'
 
+type AnnotatorOption = { id: string; name: string }
+
 type AdminTaskControlsProps = {
   taskId: string
   title: string
-  videoUrl: string
+  videoUrl: string | null
   tenantName: string | null
   assigneeName: string | null
   status: TaskStatus
   submittedAt: string | null
   segments: SegmentInput[]
+  annotators: AnnotatorOption[]
 }
 
 function triggerDownload(filename: string, content: string, mimeType: string) {
@@ -43,11 +47,39 @@ export function AdminTaskControls({
   status,
   submittedAt,
   segments,
+  annotators,
 }: AdminTaskControlsProps) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [assignTo, setAssignTo] = useState(annotators[0]?.id ?? '')
+
+  function handleAssign() {
+    if (!assignTo) {
+      return
+    }
+    const target = annotators.find((item) => item.id === assignTo)
+    const confirmed = window.confirm(
+      `确认把该任务直接指派给「${target?.name ?? assignTo}」吗？\n指派后任务立即锁定给该标注员，其他标注员无法再领取。`
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setError(null)
+    setNotice(null)
+
+    startTransition(async () => {
+      const result = await assignTaskAction(taskId, assignTo)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setNotice(`已指派给 ${target?.name ?? '标注员'}，对方可在「我的任务」中继续标注`)
+      router.refresh()
+    })
+  }
 
   function handleExportJson() {
     const effectiveMs = segments.reduce(
@@ -59,7 +91,7 @@ export function AdminTaskControls({
       title,
       tenant_name: tenantName,
       annotator_name: assigneeName,
-      video_url: videoUrl,
+      video_url: videoUrl ?? null,
       status,
       submitted_at: submittedAt,
       effective_ms: status === 'submitted' ? effectiveMs : 0,
@@ -127,13 +159,44 @@ export function AdminTaskControls({
 
   return (
     <div className="mb-4 flex flex-col gap-2">
+      {status === 'unassigned' && annotators.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3.5 py-2.5">
+          <div className="text-xs text-muted-foreground">
+            指派任务：不等待领取，直接锁定给本租户的某位标注员。
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={assignTo}
+              onChange={(event) => setAssignTo(event.target.value)}
+              aria-label="选择要指派给的标注员"
+              className="h-8 w-40 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            >
+              {annotators.map((annotator) => (
+                <option key={annotator.id} value={annotator.id}>
+                  {annotator.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isPending || !assignTo}
+              onClick={handleAssign}
+            >
+              <UserCheck data-icon="inline-start" />
+              {isPending ? '指派中…' : '指派任务'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3.5 py-2.5">
         <div className="text-xs text-muted-foreground">
           {status === 'submitted'
             ? '质检与数据交付：可导出当前任务的时间段 JSON，或对不合格标注打回重标。'
             : status === 'claimed'
               ? '异常流转处理：若标注员长期未提交，可强制回收任务回待领取池。'
-              : '该任务尚待租户内标注员领取。'}
+              : '该任务尚待租户内标注员领取，也可在上方直接指派给指定标注员。'}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

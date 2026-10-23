@@ -16,11 +16,14 @@ import { AdminTaskControls } from './admin-task-controls'
 type AdminTaskDetail = {
   id: string
   title: string
-  video_url: string
+  tenant_id: string
+  guideline: string | null
+  labels: string[] | null
   status: TaskStatus
   submitted_at: string | null
   tenant: unknown
   assignee: unknown
+  video: unknown
 }
 
 type SegmentRow = {
@@ -53,7 +56,7 @@ export default async function AdminTaskDetailPage({
   const { data } = await supabase
     .from('tasks')
     .select(
-      'id, title, video_url, status, submitted_at, tenant:tenants(name), assignee:profiles!tasks_assignee_id_fkey(display_name)'
+      'id, title, tenant_id, guideline, labels, status, submitted_at, tenant:tenants(name), assignee:profiles!tasks_assignee_id_fkey(display_name), video:videos(id, url, title, dataset, duration_ms)'
     )
     .eq('id', id)
     .maybeSingle()
@@ -65,6 +68,13 @@ export default async function AdminTaskDetailPage({
   const task = data as AdminTaskDetail
   const tenantName = relationField(task.tenant, 'name')
   const assigneeName = relationField(task.assignee, 'display_name')
+  const videoId = relationField(task.video, 'id')
+  const videoUrl = relationField(task.video, 'url')
+  const videoTitle = relationField(task.video, 'title')
+  const videoDataset = relationField(task.video, 'dataset')
+  const videoDurationMs = Number(
+    (task.video as { duration_ms?: number | null } | null)?.duration_ms ?? 0
+  )
 
   const { data: segmentData } = await supabase
     .from('segments')
@@ -77,6 +87,18 @@ export default async function AdminTaskDetailPage({
     endMs: segment.end_ms,
     note: segment.note,
   }))
+
+  // 同租户标注员列表：供「直接指派」选择
+  const { data: annotatorData } = await supabase
+    .from('profiles')
+    .select('id, display_name')
+    .eq('tenant_id', task.tenant_id)
+    .eq('role', 'annotator')
+    .order('display_name')
+  const annotators = ((annotatorData ?? []) as Array<{
+    id: string
+    display_name: string
+  }>).map((item) => ({ id: item.id, name: item.display_name }))
 
   const effectiveMs = segments.reduce(
     (sum, segment) => sum + (segment.endMs - segment.startMs),
@@ -108,7 +130,7 @@ export default async function AdminTaskDetailPage({
             </p>
           </div>
           <a
-            href={task.video_url}
+            href={videoUrl ?? '#'}
             target="_blank"
             rel="noreferrer"
             className={buttonVariants({ variant: 'outline', size: 'sm' })}
@@ -120,6 +142,14 @@ export default async function AdminTaskDetailPage({
 
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InfoTile label="租户" value={tenantName ?? '—'} />
+          <InfoTile
+            label="视频"
+            value={
+              videoTitle
+                ? `${videoTitle}${videoDataset ? `（${videoDataset}）` : ''}`
+                : '—'
+            }
+          />
           <InfoTile label="标注员" value={assigneeName ?? '未领取'} />
           <InfoTile
             label="提交时间"
@@ -142,12 +172,13 @@ export default async function AdminTaskDetailPage({
         <AdminTaskControls
           taskId={task.id}
           title={task.title}
-          videoUrl={task.video_url}
+          videoUrl={videoUrl}
           tenantName={tenantName}
           assigneeName={assigneeName}
           status={task.status}
           submittedAt={task.submitted_at}
           segments={segments}
+          annotators={annotators}
         />
 
         {task.status === 'submitted' ? null : (
@@ -158,7 +189,11 @@ export default async function AdminTaskDetailPage({
 
         <AnnotationWorkspace
           taskId={task.id}
-          videoUrl={task.video_url}
+          videoUrl={videoUrl ?? ''}
+          videoId={videoId ?? undefined}
+          initialDurationMs={videoDurationMs > 0 ? videoDurationMs : null}
+          guideline={task.guideline}
+          labels={task.labels}
           initialSegments={segments}
           readOnly
         />

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table'
 import { requireProfile } from '@/lib/auth'
 import { formatDuration } from '@/lib/format'
+import { relationField } from '@/lib/relations'
 import { createClient } from '@/lib/supabase/server'
 import {
   StatsExportBar,
@@ -28,19 +29,27 @@ import {
 } from './stats-export-bar'
 
 type TenantRow = { id: string; name: string }
+type VideoRow = { id: string; title: string }
 
 type WorkloadRow = {
   task_id: string
   tenant_id: string
   tenant_name: string
   title: string
+  video_id: string
+  video_title: string
   annotator_name: string | null
   submitted_date: string
   effective_ms: number | string
 }
 
 type StatsPageProps = {
-  searchParams: Promise<{ tenant?: string; from?: string; to?: string }>
+  searchParams: Promise<{
+    tenant?: string
+    video?: string
+    from?: string
+    to?: string
+  }>
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -80,21 +89,34 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
     .select('id, name')
     .order('name')
 
+  const { data: videoData } = await supabase
+    .from('videos')
+    .select('id, title')
+    .order('created_at', { ascending: false })
+
   const tenants = (tenantData ?? []) as TenantRow[]
+  const videos = (videoData ?? []) as VideoRow[]
   const tenantFilter = tenants.some((tenant) => tenant.id === params.tenant)
     ? params.tenant
     : undefined
+  const videoFilter =
+    params.video && videos.some((video) => video.id === params.video)
+      ? params.video
+      : undefined
   const from = DATE_PATTERN.test(params.from ?? '') ? params.from : undefined
   const to = DATE_PATTERN.test(params.to ?? '') ? params.to : undefined
 
   let query = supabase
     .from('task_workloads')
     .select(
-      'task_id, tenant_id, tenant_name, title, annotator_name, submitted_date, effective_ms'
+      'task_id, tenant_id, tenant_name, title, video_id, video_title, annotator_name, submitted_date, effective_ms'
     )
 
   if (tenantFilter) {
     query = query.eq('tenant_id', tenantFilter)
+  }
+  if (videoFilter) {
+    query = query.eq('video_id', videoFilter)
   }
   if (from) {
     query = query.gte('submitted_date', from)
@@ -166,7 +188,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
     const [{ data: taskMeta }, { data: segData }] = await Promise.all([
       supabase
         .from('tasks')
-        .select('id, video_url')
+        .select('id, video:videos(url)')
         .in('id', submittedTaskIds),
       supabase
         .from('segments')
@@ -177,9 +199,9 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
 
     for (const item of (taskMeta ?? []) as Array<{
       id: string
-      video_url: string
+      video: unknown
     }>) {
-      videoUrlMap.set(item.id, item.video_url)
+      videoUrlMap.set(item.id, relationField(item.video, 'url') ?? '')
     }
 
     for (const seg of (segData ?? []) as Array<{
@@ -246,6 +268,23 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                   {tenants.map((tenant) => (
                     <option key={tenant.id} value={tenant.id}>
                       {tenant.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="video">视频</Label>
+                <select
+                  id="video"
+                  name="video"
+                  defaultValue={videoFilter ?? 'all'}
+                  className="h-8 w-44 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                >
+                  <option value="all">全部视频</option>
+                  {videos.map((video) => (
+                    <option key={video.id} value={video.id}>
+                      {video.title}
                     </option>
                   ))}
                 </select>
@@ -426,6 +465,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                     <TableRow>
                       <TableHead>日期</TableHead>
                       <TableHead>任务</TableHead>
+                      <TableHead className="hidden md:table-cell">视频</TableHead>
                       <TableHead>标注员</TableHead>
                       <TableHead>有效时长</TableHead>
                     </TableRow>
@@ -436,13 +476,16 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                         <TableCell className="whitespace-nowrap text-muted-foreground">
                           {row.submitted_date}
                         </TableCell>
-                        <TableCell className="max-w-[12rem] truncate font-medium">
+                        <TableCell className="max-w-[10rem] truncate font-medium">
                           <Link
                             href={`/admin/tasks/${row.task_id}`}
                             className="hover:underline"
                           >
                             {row.title}
                           </Link>
+                        </TableCell>
+                        <TableCell className="hidden max-w-[10rem] truncate text-muted-foreground md:table-cell">
+                          {row.video_title}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {row.annotator_name ?? '—'}

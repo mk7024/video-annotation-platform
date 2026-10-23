@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type { MouseEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  BookOpen,
   Keyboard,
   Pause,
   Play,
@@ -27,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { formatDuration, formatTimecodeMs } from '@/lib/format'
 import type { SegmentInput } from '@/lib/types'
 import {
+  reportVideoDurationAction,
   saveDraftAction,
   submitTaskAction,
   unclaimTaskAction,
@@ -37,13 +39,18 @@ type SegmentItem = SegmentInput & { id: string }
 type AnnotationWorkspaceProps = {
   taskId: string
   videoUrl: string
+  videoId?: string
+  initialDurationMs?: number | null
+  guideline?: string | null
+  labels?: string[] | null
   initialSegments: SegmentInput[]
   readOnly: boolean
 }
 
 const SPEED_OPTIONS = [0.5, 1, 1.5, 2] as const
 
-const ACTION_TAG_PRESETS = [
+// 任务未配置标签集时的兜底（通用机器人操作原语）
+const DEFAULT_ACTION_TAGS = [
   '抓取物体',
   '移动机械臂',
   '对准目标',
@@ -52,6 +59,8 @@ const ACTION_TAG_PRESETS = [
   '按压按钮',
   '机械臂复位',
 ] as const
+
+const AUTOSAVE_DELAY_MS = 3000
 
 function signature(segments: SegmentInput[]): string {
   return JSON.stringify(
@@ -73,12 +82,17 @@ function totalLength(segments: SegmentInput[]): number {
 export function AnnotationWorkspace({
   taskId,
   videoUrl,
+  videoId,
+  initialDurationMs,
+  guideline,
+  labels,
   initialSegments,
   readOnly,
 }: AnnotationWorkspaceProps) {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const keyRef = useRef(initialSegments.length)
+  const autosaveInFlightRef = useRef(false)
 
   const [segments, setSegments] = useState<SegmentItem[]>(() =>
     initialSegments.map((segment, index) => ({
@@ -91,7 +105,9 @@ export function AnnotationWorkspace({
   )
   const [pendingStart, setPendingStart] = useState<number | null>(null)
   const [pendingEnd, setPendingEnd] = useState<number | null>(null)
-  const [durationMs, setDurationMs] = useState(0)
+  const [durationMs, setDurationMs] = useState(
+    initialDurationMs && initialDurationMs > 0 ? initialDurationMs : 0
+  )
   const [currentMs, setCurrentMs] = useState(0)
   const [playbackRate, setPlaybackRate] = useState<number>(1)
   const [previewEndMs, setPreviewEndMs] = useState<number | null>(null)
@@ -100,9 +116,18 @@ export function AnnotationWorkspace({
   const [videoLoadError, setVideoLoadError] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [autosaveState, setAutosaveState] = useState<
+    'idle' | 'saving' | 'saved' | 'error'
+  >('idle')
   const [isPending, startTransition] = useTransition()
 
-  const dirty = signature(segments) !== savedSignature
+  const presetTags = useMemo(
+    () => (labels && labels.length > 0 ? labels : [...DEFAULT_ACTION_TAGS]),
+    [labels]
+  )
+
+  const currentSignature = signature(segments)
+  const dirty = currentSignature !== savedSignature
   const fallbackTotal = segments.reduce(
     (max, segment) => Math.max(max, segment.endMs),
     60_000
@@ -136,7 +161,18 @@ export function AnnotationWorkspace({
     setVideoLoadError(false)
     const duration = videoRef.current?.duration
     if (duration && Number.isFinite(duration)) {
-      setDurationMs(Math.round(duration * 1000))
+      const loadedMs = Math.round(duration * 1000)
+      setDurationMs(loadedMs)
+
+      // 首次打开时把视频实际时长回填视频库，之后服务端校验不再依赖客户端传值
+      if (videoId && !initialDurationMs) {
+        void reportVideoDurationAction(videoId, loadedMs).then((result) => {
+          if (!result.ok) {
+            // 回填失败不影响标注，仅静默降级
+            console.warn('视频时长回填失败', result.error)
+          }
+        })
+      }
     }
   }
 
@@ -207,6 +243,10 @@ export function AnnotationWorkspace({
 
   const addSegment = useCallback(
     (startMs: number, endMs: number) => {
+      if (endMs - startMs < 100) {
+        setError('片段长度至少需要 0.1 秒')
+        return
+      }
       if (durationMs > 0 && endMs > durationMs + 100) {
         setError('终点超出了视频总时长')
         return
@@ -323,6 +363,42 @@ export function AnnotationWorkspace({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [clearPending, markEnd, markStart, readOnly, stepByMs])
+
+  // 草稿自动保存：修改停止数秒后触发；保存期间或提交中不调度，成功后若仍在编辑会自动进入下一轮
+  useEffect(() => {
+    if (readOnly || !dirty || isPending || autosaveInFlightRef.current) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      if (autosaveInFlightRef.current) {
+        return
+      }
+      autosaveInFlightRef.current = true
+      setAutosaveState('saving')
+
+      const payload = currentPayload()
+      void saveDraftAction(
+        taskId,
+        payload,
+        durationMs > 0 ? durationMs : undefined
+      )
+        .then((result) => {
+          if (!result.ok) {
+            setAutosaveState('error')
+            return
+          }
+          setSavedSignature(signature(payload))
+          setAutosaveState('saved')
+        })
+        .finally(() => {
+          autosaveInFlightRef.current = false
+        })
+    }, AUTOSAVE_DELAY_MS)
+
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSignature, savedSignature, readOnly, isPending, segments, taskId, durationMs])
 
   function removeSegment(id: string) {
     setSegments((previous) => previous.filter((segment) => segment.id !== id))
@@ -509,6 +585,18 @@ export function AnnotationWorkspace({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
       <Card>
         <CardContent className="flex flex-col gap-4">
+          {guideline ? (
+            <div className="rounded-lg border border-amber-300/60 bg-amber-50/60 px-3 py-2.5 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+              <p className="flex items-center gap-1.5 font-medium text-amber-900 dark:text-amber-300">
+                <BookOpen className="size-4" />
+                标注指引
+              </p>
+              <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-amber-900/80 dark:text-amber-200/80">
+                {guideline}
+              </p>
+            </div>
+          ) : null}
+
           <video
             ref={videoRef}
             src={videoUrl}
@@ -777,7 +865,13 @@ export function AnnotationWorkspace({
                   释放回任务池
                 </Button>
                 <span className="text-xs text-muted-foreground">
-                  {dirty ? '● 有未保存的修改' : '✓ 当前内容已保存'}
+                  {autosaveState === 'saving'
+                    ? '● 自动保存中…'
+                    : autosaveState === 'error' && dirty
+                      ? '⚠ 自动保存失败，请手动保存'
+                      : dirty
+                        ? '● 修改将在片刻后自动保存'
+                        : '✓ 当前内容已保存'}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -1011,7 +1105,7 @@ export function AnnotationWorkspace({
                           <span className="text-[11px] text-muted-foreground">
                             快捷标签：
                           </span>
-                          {ACTION_TAG_PRESETS.map((tag) => (
+                          {presetTags.map((tag) => (
                             <button
                               key={tag}
                               type="button"

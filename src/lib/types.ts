@@ -10,6 +10,15 @@ export type Profile = {
   tenant_name: string | null
 }
 
+export type VideoRecord = {
+  id: string
+  title: string
+  url: string
+  duration_ms: number | null
+  dataset: string | null
+  episode: string | null
+}
+
 export type SegmentInput = {
   startMs: number
   endMs: number

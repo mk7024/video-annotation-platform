@@ -9,6 +9,8 @@ export function AppHeader({ profile }: { profile: Profile }) {
     profile.role === 'admin'
       ? [
           { href: '/admin', label: '任务管理' },
+          { href: '/admin/videos', label: '视频库' },
+          { href: '/admin/members', label: '租户与成员' },
           { href: '/admin/stats', label: '工作量统计' },
         ]
       : [{ href: '/tasks', label: '我的任务' }]

@@ -39,6 +39,10 @@ function toRows(
       return { error: '时间段起点和终点不合法（终点必须晚于起点）' }
     }
 
+    if (end - start < 100) {
+      return { error: '片段长度至少需要 0.1 秒' }
+    }
+
     if (end > limitMs || end > MAX_REASONABLE_VIDEO_MS) {
       return { error: '时间段终点超出了视频总时长上限' }
     }
@@ -113,6 +117,29 @@ export async function submitTaskAction(
   revalidatePath(`/tasks/${taskId}`)
   revalidatePath('/admin')
   revalidatePath('/admin/stats')
+  return { ok: true }
+}
+
+export async function reportVideoDurationAction(
+  videoId: string,
+  durationMs: number
+): Promise<ActionResult> {
+  await requireProfile()
+
+  const rounded = Math.round(durationMs)
+  if (!Number.isFinite(rounded) || rounded <= 0) {
+    return { ok: false, error: '视频时长数据不合法' }
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase.rpc('report_video_duration', {
+    p_video_id: videoId,
+    p_duration_ms: rounded,
+  })
+
+  if (error) {
+    return { ok: false, error: translateDbError(error.message) }
+  }
   return { ok: true }
 }
 
