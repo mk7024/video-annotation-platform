@@ -49,6 +49,40 @@ type AnnotationWorkspaceProps = {
 
 const SPEED_OPTIONS = [0.5, 1, 1.5, 2] as const
 
+// 时间轴缩放档位：null 表示全程。长视频（几十分钟）里片段在全程视图下只有几个像素，
+// 缩放到局部窗口后才能看清、点中；缩略导航条负责全程定位
+const ZOOM_OPTIONS: Array<{ label: string; ms: number | null }> = [
+  { label: '全程', ms: null },
+  { label: '5 分钟', ms: 300_000 },
+  { label: '1 分钟', ms: 60_000 },
+  { label: '15 秒', ms: 15_000 },
+]
+
+// 按窗口长度挑一个"整"的刻度步长（约 6~10 根刻度）
+function niceRulerStep(rangeMs: number): number {
+  const rough = rangeMs / 8
+  const steps = [
+    100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000,
+    120_000, 300_000, 600_000, 900_000, 1_800_000,
+  ]
+  return steps.find((step) => step >= rough) ?? 3_600_000
+}
+
+function formatRulerLabel(ms: number, stepMs: number): string {
+  const totalSeconds = ms / 1000
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const secondsText =
+    stepMs < 1000
+      ? seconds.toFixed(1).padStart(4, '0')
+      : String(Math.round(seconds)).padStart(2, '0')
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${secondsText}`
+  }
+  return `${String(minutes).padStart(2, '0')}:${secondsText}`
+}
+
 // 任务未配置标签集时的兜底（通用机器人操作原语）
 const DEFAULT_ACTION_TAGS = [
   '抓取物体',
@@ -111,6 +145,8 @@ export function AnnotationWorkspace({
   const [currentMs, setCurrentMs] = useState(0)
   const [playbackRate, setPlaybackRate] = useState<number>(1)
   const [previewEndMs, setPreviewEndMs] = useState<number | null>(null)
+  const [zoomWindowMs, setZoomWindowMs] = useState<number | null>(null)
+  const [viewStartMs, setViewStartMs] = useState(0)
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
   const [videoLoadError, setVideoLoadError] = useState(false)
@@ -135,6 +171,36 @@ export function AnnotationWorkspace({
   const totalMs = durationMs > 0 ? durationMs : fallbackTotal
   const currentTotalMs = totalLength(segments)
 
+  // 缩放窗口：以播放头为中心；播放头快移出可视带（前后 10%）时才重新居中，
+  // 避免 0.1s 步进时刻度尺跟着抖动。窗口状态在移动播放头的地方同步更新
+  const viewMs = Math.min(zoomWindowMs ?? totalMs, totalMs)
+
+  const syncViewWindow = useCallback(
+    (ms: number) => {
+      setViewStartMs((previous) => {
+        const maxStart = Math.max(0, totalMs - viewMs)
+        const clamped = Math.min(previous, maxStart)
+        const margin = viewMs * 0.1
+        if (ms < clamped + margin || ms > clamped + viewMs - margin) {
+          return Math.max(0, Math.min(maxStart, ms - viewMs / 2))
+        }
+        return clamped
+      })
+    },
+    [totalMs, viewMs]
+  )
+
+  function changeZoom(nextMs: number | null) {
+    setZoomWindowMs(nextMs)
+    const nextViewMs = Math.min(nextMs ?? totalMs, totalMs)
+    setViewStartMs(
+      Math.max(
+        0,
+        Math.min(Math.max(0, totalMs - nextViewMs), currentMs - nextViewMs / 2)
+      )
+    )
+  }
+
   // 未保存离开拦截，避免标注员误关标签页丢失草稿
   useEffect(() => {
     if (readOnly || !dirty) {
@@ -151,6 +217,28 @@ export function AnnotationWorkspace({
   function toPercent(ms: number): string {
     const ratio = totalMs > 0 ? ms / totalMs : 0
     return `${Math.min(100, Math.max(0, ratio * 100))}%`
+  }
+
+  // 渲染兜底：视频时长晚加载/总长变化时窗口起点可能越界，压回合法区间
+  const safeViewStartMs = Math.min(
+    viewStartMs,
+    Math.max(0, totalMs - viewMs)
+  )
+  const viewEndMs = safeViewStartMs + viewMs
+
+  function toViewPercent(ms: number): string {
+    const ratio = viewMs > 0 ? (ms - safeViewStartMs) / viewMs : 0
+    return `${Math.min(100, Math.max(0, ratio * 100))}%`
+  }
+
+  const rulerStepMs = niceRulerStep(viewMs)
+  const rulerTicks: number[] = []
+  for (
+    let tick = Math.ceil(safeViewStartMs / rulerStepMs) * rulerStepMs;
+    tick <= viewEndMs;
+    tick += rulerStepMs
+  ) {
+    rulerTicks.push(tick)
   }
 
   const readCurrentMs = useCallback((): number => {
@@ -178,18 +266,19 @@ export function AnnotationWorkspace({
 
   function handleTimeUpdate() {
     const ms = readCurrentMs()
-    setCurrentMs(ms)
-
     // 区间预览模式：播放到达当前预览片段终点时自动暂停
+    let finalMs = ms
     if (previewEndMs != null && ms >= previewEndMs) {
       const video = videoRef.current
       if (video && !video.paused) {
         video.pause()
         video.currentTime = previewEndMs / 1000
       }
-      setCurrentMs(previewEndMs)
+      finalMs = previewEndMs
       setPreviewEndMs(null)
     }
+    setCurrentMs(finalMs)
+    syncViewWindow(finalMs)
   }
 
   const seekTo = useCallback(
@@ -203,8 +292,9 @@ export function AnnotationWorkspace({
       setPreviewEndMs(null)
       video.currentTime = clamped / 1000
       setCurrentMs(clamped)
+      syncViewWindow(clamped)
     },
-    [durationMs, totalMs]
+    [durationMs, totalMs, syncViewWindow]
   )
 
   const stepByMs = useCallback(
@@ -229,6 +319,20 @@ export function AnnotationWorkspace({
   }
 
   function handleTrackClick(event: MouseEvent<HTMLButtonElement>) {
+    const video = videoRef.current
+    if (!video || video.readyState < 1) {
+      return
+    }
+    const rect = event.currentTarget.getBoundingClientRect()
+    const ratio = Math.min(
+      1,
+      Math.max(0, (event.clientX - rect.left) / rect.width)
+    )
+    seekTo(Math.round(viewStartMs + ratio * viewMs))
+  }
+
+  // 缩略导航条：始终展示全程，点击直接把播放头跳到对应位置
+  function handleOverviewClick(event: MouseEvent<HTMLButtonElement>) {
     const video = videoRef.current
     if (!video || video.readyState < 1) {
       return
@@ -489,6 +593,7 @@ export function AnnotationWorkspace({
     setPreviewEndMs(segment.endMs)
     video.currentTime = segment.startMs / 1000
     setCurrentMs(segment.startMs)
+    syncViewWindow(segment.startMs)
     void video.play()
   }
 
@@ -679,14 +784,43 @@ export function AnnotationWorkspace({
           </div>
 
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                时间段轨道（点击空白处跳转，点击色块预览该片段并在终点自动暂停）
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="mr-1">时间轴</span>
+                {ZOOM_OPTIONS.map((option) => (
+                  <Button
+                    key={option.label}
+                    type="button"
+                    variant={
+                      zoomWindowMs === option.ms ? 'default' : 'ghost'
+                    }
+                    size="xs"
+                    onClick={() => changeZoom(option.ms)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
               <span className="font-mono tabular-nums">
                 {formatTimecodeMs(currentMs)} /{' '}
                 {durationMs > 0 ? formatTimecodeMs(durationMs) : '--:--'}
               </span>
+            </div>
+
+            {/* 时间刻度尺：按当前窗口自适应步长 */}
+            <div className="relative h-5 w-full select-none">
+              {rulerTicks.map((tick) => (
+                <span
+                  key={tick}
+                  className="absolute bottom-0 flex -translate-x-1/2 flex-col items-center"
+                  style={{ left: toViewPercent(tick) }}
+                >
+                  <span className="font-mono text-[10px] leading-none text-muted-foreground">
+                    {formatRulerLabel(tick, rulerStepMs)}
+                  </span>
+                  <span className="mt-0.5 h-1 w-px bg-border" />
+                </span>
+              ))}
             </div>
 
             <button
@@ -715,9 +849,12 @@ export function AnnotationWorkspace({
                         : 'bg-primary/75 hover:bg-primary'
                     }`}
                     style={{
-                      left: toPercent(segment.startMs),
-                      width: toPercent(segment.endMs - segment.startMs),
-                      minWidth: '4px',
+                      left: toViewPercent(segment.startMs),
+                      width: `${
+                        ((segment.endMs - segment.startMs) / Math.max(1, viewMs)) *
+                        100
+                      }%`,
+                      minWidth: '6px',
                     }}
                   >
                     <span className="truncate px-1">{index + 1}</span>
@@ -731,8 +868,10 @@ export function AnnotationWorkspace({
                 <span
                   className="pointer-events-none absolute inset-y-1.5 bg-amber-400/40"
                   style={{
-                    left: toPercent(pendingStart),
-                    width: toPercent(pendingEnd - pendingStart),
+                    left: toViewPercent(pendingStart),
+                    width: `${
+                      ((pendingEnd - pendingStart) / Math.max(1, viewMs)) * 100
+                    }%`,
                   }}
                 />
               ) : null}
@@ -740,25 +879,65 @@ export function AnnotationWorkspace({
               {pendingStart != null ? (
                 <span
                   className="pointer-events-none absolute inset-y-0 border-l-2 border-amber-500"
-                  style={{ left: toPercent(pendingStart) }}
+                  style={{ left: toViewPercent(pendingStart) }}
                 />
               ) : null}
 
               <span
                 className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
-                style={{ left: toPercent(currentMs) }}
+                style={{ left: toViewPercent(currentMs) }}
               />
             </button>
 
+            {/* 缩放时的全程缩略导航：蓝框是当前窗口，点击跳转 */}
+            {zoomWindowMs != null && viewMs < totalMs ? (
+              <button
+                type="button"
+                aria-label="全程缩略导航"
+                onClick={handleOverviewClick}
+                className="relative h-3.5 w-full cursor-pointer overflow-hidden rounded border bg-muted"
+                title="全程缩略图：蓝框为当前窗口位置，点击任意位置跳转"
+              >
+                {segments.map((segment, index) => (
+                  <span
+                    key={segment.id}
+                    className="absolute inset-y-0.5 rounded-sm bg-primary/60"
+                    style={{
+                      left: toPercent(segment.startMs),
+                      width: toPercent(segment.endMs - segment.startMs),
+                      minWidth: '2px',
+                    }}
+                    title={`#${index + 1}`}
+                  />
+                ))}
+                <span
+                  className="pointer-events-none absolute inset-y-0 border-x-2 border-sky-500 bg-sky-500/15"
+                  style={{
+                    left: toPercent(safeViewStartMs),
+                    width: `${(viewMs / Math.max(1, totalMs)) * 100}%`,
+                  }}
+                />
+                <span
+                  className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
+                  style={{ left: toPercent(currentMs) }}
+                />
+              </button>
+            ) : null}
+
             <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
-              <span>00:00.0</span>
+              <span>{formatRulerLabel(viewStartMs, rulerStepMs)}</span>
               {previewEndMs != null ? (
                 <span className="text-emerald-600 dark:text-emerald-400">
                   正在区间预览（将在 {formatTimecodeMs(previewEndMs)} 自动暂停）
                 </span>
               ) : null}
-              <span>{formatTimecodeMs(totalMs)}</span>
+              <span>{formatRulerLabel(viewEndMs, rulerStepMs)}</span>
             </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              点击空白处跳转，点击色块预览该片段并在终点自动暂停；长视频建议切到
+              1 分钟 / 15 秒档位精修边界。
+            </p>
           </div>
 
           {readOnly ? null : (

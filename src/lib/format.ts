@@ -1,8 +1,13 @@
 export function formatTimecode(seconds: number): string {
   const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
-  const minutes = Math.floor(safe / 60)
-  const rest = safe - minutes * 60
-  return `${String(minutes).padStart(2, '0')}:${rest.toFixed(1).padStart(4, '0')}`
+  const hours = Math.floor(safe / 3600)
+  const minutes = Math.floor((safe % 3600) / 60)
+  const rest = safe - Math.floor(safe / 60) * 60
+  const restText = rest.toFixed(1).padStart(4, '0')
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${restText}`
+  }
+  return `${String(minutes).padStart(2, '0')}:${restText}`
 }
 
 export function formatTimecodeMs(ms: number): string {
